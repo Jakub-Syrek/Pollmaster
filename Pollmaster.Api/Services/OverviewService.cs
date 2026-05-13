@@ -54,9 +54,13 @@ public sealed class OverviewService : IOverviewService
     }
 
     /// <inheritdoc />
-    public async Task<Result<IReadOnlyList<StationOverviewDto>>> GetOverviewAsync(CancellationToken cancellationToken)
+    public async Task<Result<IReadOnlyList<StationOverviewDto>>> GetOverviewAsync(
+        CancellationToken cancellationToken,
+        bool forceRefresh = false)
     {
-        if (_cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? cached) && cached is not null)
+        if (!forceRefresh &&
+            _cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? cached) &&
+            cached is not null)
         {
             return Result<IReadOnlyList<StationOverviewDto>>.Success(cached);
         }

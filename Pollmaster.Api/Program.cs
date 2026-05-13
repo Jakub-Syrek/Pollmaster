@@ -25,6 +25,11 @@ builder.Services
     .Bind(builder.Configuration.GetSection(CorsOptions.SectionName))
     .ValidateOnStart();
 
+builder.Services
+    .AddOptions<OverviewWarmupOptions>()
+    .Bind(builder.Configuration.GetSection(OverviewWarmupOptions.SectionName))
+    .ValidateOnStart();
+
 builder.Services.AddSingleton<IStationMapper, StationMapper>();
 builder.Services.AddSingleton<ISensorMapper, SensorMapper>();
 builder.Services.AddSingleton<IMeasurementMapper, MeasurementMapper>();
@@ -38,6 +43,8 @@ builder.Services.AddScoped<IMeasurementService, MeasurementService>();
 builder.Services.AddScoped<IAirQualityIndexService, AirQualityIndexService>();
 builder.Services.AddScoped<IStationSnapshotService, StationSnapshotService>();
 builder.Services.AddScoped<IOverviewService, OverviewService>();
+
+builder.Services.AddHostedService<OverviewCacheWarmupService>();
 
 builder.Services.AddSingleton<GiosRateLimitHandler>();
 
