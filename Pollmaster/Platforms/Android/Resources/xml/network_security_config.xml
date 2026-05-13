@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network-security policy for the Pollmaster MAUI Android client.
+
+  The base configuration enables cleartext HTTP because the dev workflow
+  points the app at a Pollmaster.Api running on the LAN (the PC's private
+  IPv4 address, e.g. 192.168.X.Y:5100). Android's network-security-config
+  does not accept CIDR masks, so it is not possible to whitelist only RFC
+  1918 ranges declaratively — hence the base allowance.
+
+  Production deployments MUST replace this file with one that sets
+  cleartextTrafficPermitted="false" and require HTTPS only.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+
+  <debug-overrides>
+    <trust-anchors>
+      <certificates src="system" />
+      <certificates src="user" />
+    </trust-anchors>
+  </debug-overrides>
+</network-security-config>

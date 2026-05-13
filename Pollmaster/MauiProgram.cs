@@ -13,6 +13,9 @@ namespace Pollmaster;
 /// </summary>
 public static class MauiProgram
 {
+    private const string BaseConfigFileName = "appsettings.json";
+    private const string AndroidOverrideFileName = "appsettings.Android.json";
+
     /// <summary>Create the configured MAUI application.</summary>
     /// <returns>Built <see cref="MauiApp"/> instance.</returns>
     public static MauiApp CreateMauiApp()
@@ -38,16 +41,33 @@ public static class MauiProgram
 
     private static void ConfigureConfiguration(IConfigurationBuilder configuration)
     {
-        var defaults = new Dictionary<string, string?>
-        {
+        configuration.AddInMemoryCollection(BuildDefaults());
+        LoadBundledJson(configuration, BaseConfigFileName);
 #if ANDROID
-            [$"{ApiClientOptions.SectionName}:BaseAddress"] = "http://10.0.2.2:5100/",
-#else
-            [$"{ApiClientOptions.SectionName}:BaseAddress"] = "https://localhost:7100/",
+        LoadBundledJson(configuration, AndroidOverrideFileName);
 #endif
+    }
+
+    private static Dictionary<string, string?> BuildDefaults()
+    {
+        return new Dictionary<string, string?>
+        {
+            [$"{ApiClientOptions.SectionName}:BaseAddress"] = "https://localhost:7100/",
             [$"{ApiClientOptions.SectionName}:TimeoutSeconds"] = "30"
         };
-        configuration.AddInMemoryCollection(defaults);
+    }
+
+    private static void LoadBundledJson(IConfigurationBuilder configuration, string fileName)
+    {
+        try
+        {
+            using var stream = FileSystem.OpenAppPackageFileAsync(fileName).GetAwaiter().GetResult();
+            configuration.AddJsonStream(stream);
+        }
+        catch (FileNotFoundException)
+        {
+            // Optional override file; ignore when not bundled.
+        }
     }
 
     private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
