@@ -71,31 +71,71 @@ html, body, #app {
     list-style: none;
     padding: 0;
     margin: 0;
-    max-height: 200px;
+    max-height: 240px;
     overflow-y: auto;
 }
 
-.aq-popup__sensors li {
-    padding: 0.15rem 0;
+.aq-popup__sensor {
+    padding: 0.35rem 0;
     border-bottom: 1px solid #eee;
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
     font-size: 0.85rem;
 }
 
-.aq-popup__sensors li:last-child {
+.aq-popup__sensor:last-child {
     border-bottom: none;
+}
+
+.aq-popup__sensor--empty {
+    opacity: 0.5;
+}
+
+.aq-popup__sensor-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: baseline;
 }
 
 .aq-popup__sensor-name {
     color: #333;
+    font-weight: 500;
 }
 
 .aq-popup__sensor-value {
     color: #2e7d32;
     font-weight: 600;
+    white-space: nowrap;
 }
+
+.aq-popup__sensor-value small {
+    color: #888;
+    font-weight: 400;
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+}
+
+.aq-popup__bar {
+    height: 6px;
+    background: #f0f0f0;
+    border-radius: 3px;
+    margin-top: 0.25rem;
+    overflow: hidden;
+}
+
+.aq-popup__bar--idle {
+    background: #f5f5f5;
+}
+
+.aq-popup__bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.aq-popup__bar-fill.aq-popup__bar--good { background: #4caf50; }
+.aq-popup__bar-fill.aq-popup__bar--warn { background: #ffb300; }
+.aq-popup__bar-fill.aq-popup__bar--bad { background: #d32f2f; }
+.aq-popup__bar-fill.aq-popup__bar--empty { background: transparent; }
 
 .aq-popup__loading {
     font-style: italic;

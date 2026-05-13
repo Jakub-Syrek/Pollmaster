@@ -19,6 +19,20 @@
         '5': 'Very bad'
     };
 
+    // WHO 2021 short-term air-quality guideline values (μg/m³, 24h or 8h). Used as the
+    // 100%-fill point on the per-pollutant bar. Values above the guideline render red.
+    // Source: WHO global air-quality guidelines 2021, Polish national standard for BaP.
+    const POLLUTANT_LIMITS = {
+        'PM10': 45,
+        'PM2.5': 15,
+        'NO2': 25,
+        'SO2': 40,
+        'O3': 100,
+        'CO': 4000,
+        'C6H6': 5,
+        'BaP(PM10)': 0.001
+    };
+
     function indexClass(value) {
         if (value === null || value === undefined || value < 0) {
             return 'aq-color--unknown';
@@ -58,17 +72,67 @@
             '</div></div>';
     }
 
+    function formatValue(value, unit) {
+        if (value === null || value === undefined) {
+            return '&mdash;';
+        }
+        const fixed = Math.abs(value) < 1 ? value.toFixed(3) : value.toFixed(1);
+        return fixed + ' ' + escapeHtml(unit || '');
+    }
+
+    function barFillPercent(code, value) {
+        if (value === null || value === undefined) {
+            return 0;
+        }
+        const limit = POLLUTANT_LIMITS[code];
+        if (!limit || limit <= 0) {
+            return 0;
+        }
+        const pct = (value / limit) * 100;
+        if (!isFinite(pct) || pct < 0) {
+            return 0;
+        }
+        return Math.min(pct, 200);
+    }
+
+    function barClass(percent) {
+        if (percent === 0) {
+            return 'aq-popup__bar--empty';
+        }
+        if (percent <= 50) {
+            return 'aq-popup__bar--good';
+        }
+        if (percent <= 100) {
+            return 'aq-popup__bar--warn';
+        }
+        return 'aq-popup__bar--bad';
+    }
+
+    function sensorRow(sensor) {
+        const limit = POLLUTANT_LIMITS[sensor.code];
+        const hasValue = sensor.value !== null && sensor.value !== undefined;
+        const fillPercent = barFillPercent(sensor.code, sensor.value);
+        const trackClass = hasValue ? 'aq-popup__bar' : 'aq-popup__bar aq-popup__bar--idle';
+        const fillClass = 'aq-popup__bar-fill ' + barClass(fillPercent);
+        const widthStyle = 'width: ' + Math.min(fillPercent, 100).toFixed(1) + '%;';
+        const limitLabel = limit ? ' / ' + limit + ' WHO' : '';
+        const rowClass = hasValue ? 'aq-popup__sensor' : 'aq-popup__sensor aq-popup__sensor--empty';
+
+        return '<li class="' + rowClass + '">' +
+            '<div class="aq-popup__sensor-head">' +
+            '<span class="aq-popup__sensor-name">' + escapeHtml(sensor.code) + '</span>' +
+            '<span class="aq-popup__sensor-value">' + formatValue(sensor.value, sensor.unit) +
+            (hasValue && limit ? '<small>' + limitLabel + '</small>' : '') +
+            '</span></div>' +
+            '<div class="' + trackClass + '"><div class="' + fillClass + '" style="' + widthStyle + '"></div></div>' +
+            '</li>';
+    }
+
     function sensorsHtml(sensors) {
         if (!sensors || sensors.length === 0) {
             return '<div class="aq-popup__loading">No sensor readings.</div>';
         }
-        const items = sensors.map(function (s) {
-            const value = (s.value === null || s.value === undefined)
-                ? '&mdash;'
-                : Number(s.value).toFixed(1) + ' ' + escapeHtml(s.unit || '');
-            return '<li><span class="aq-popup__sensor-name">' + escapeHtml(s.code) +
-                '</span><span class="aq-popup__sensor-value">' + value + '</span></li>';
-        }).join('');
+        const items = sensors.map(sensorRow).join('');
         return '<ul class="aq-popup__sensors">' + items + '</ul>';
     }
 
