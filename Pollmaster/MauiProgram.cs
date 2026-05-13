@@ -84,5 +84,7 @@ public static class MauiProgram
             http.BaseAddress = new Uri(options.BaseAddress);
             http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
         }).AddStandardResilienceHandler();
+
+        services.AddSingleton<IMediaCaptureService, MediaCaptureService>();
     }
 }

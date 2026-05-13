@@ -1,16 +1,36 @@
 @using System.Threading
 @using Microsoft.AspNetCore.Components
+@using Microsoft.Extensions.Logging
 @using Microsoft.JSInterop
 @using Pollmaster.Services
 @using Pollmaster.Shared.Common
 @using Pollmaster.Shared.Contracts
 @implements IAsyncDisposable
 @inject IPollmasterApiClient ApiClient
+@inject IMediaCaptureService CaptureService
+@inject ILogger<MapView> Logger
 @inject IJSRuntime JS
 
 <div class="map-page">
     <header class="map-page__header">
         <h2>Pollmaster — Polish air-quality map</h2>
+        <div class="map-page__actions">
+            <button type="button" class="map-page__btn"
+                    @onclick="OnScreenshotClickedAsync"
+                    disabled="@_busy">Screenshot</button>
+            @if (_recordingSessionId is null)
+            {
+                <button type="button" class="map-page__btn"
+                        @onclick="OnStartRecordingClickedAsync"
+                        disabled="@_busy">Record</button>
+            }
+            else
+            {
+                <button type="button" class="map-page__btn map-page__btn--recording"
+                        @onclick="OnStopRecordingClickedAsync"
+                        disabled="@_busy">Stop recording</button>
+            }
+        </div>
         <span class="map-page__status">@_status</span>
     </header>
     <div class="map-page__container">
@@ -19,10 +39,15 @@
 </div>
 
 @code {
+    private const string MapContainerElementId = "pollmaster-map";
+    private const int RecordingFps = 4;
+
     private ElementReference _mapElement;
     private DotNetObjectReference<MapView>? _dotnetRef;
     private string _status = "Initializing...";
     private bool _initialized;
+    private bool _busy;
+    private string? _recordingSessionId;
     private readonly CancellationTokenSource _cts = new();
 
     /// <inheritdoc />
@@ -69,6 +94,18 @@
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
+        if (_recordingSessionId is not null)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("pollmasterCapture.abortRecording", _recordingSessionId);
+            }
+            catch
+            {
+                // WebView may already be torn down.
+            }
+            _recordingSessionId = null;
+        }
         try
         {
             await JS.InvokeVoidAsync("pollmasterMap.dispose");
@@ -97,6 +134,90 @@
         await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
         _status = $"{markers.Length} stations loaded";
         StateHasChanged();
+    }
+
+    private async Task OnScreenshotClickedAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+        await RunCaptureAsync(async () =>
+        {
+            _status = "Capturing screenshot...";
+            StateHasChanged();
+            var dataUri = await JS.InvokeAsync<string>(
+                "pollmasterCapture.captureScreenshot", _cts.Token, MapContainerElementId);
+            await CaptureService.SaveAndShareAsync(dataUri, ".png", "Pollmaster screenshot");
+            _status = "Screenshot ready — share sheet opened.";
+        }, failureStatus: "Screenshot failed.");
+    }
+
+    private async Task OnStartRecordingClickedAsync()
+    {
+        if (_busy || _recordingSessionId is not null)
+        {
+            return;
+        }
+        _busy = true;
+        try
+        {
+            _status = $"Starting recording at {RecordingFps} fps...";
+            StateHasChanged();
+            _recordingSessionId = await JS.InvokeAsync<string>(
+                "pollmasterCapture.startRecording", _cts.Token, MapContainerElementId, RecordingFps);
+            _status = "Recording — tap Stop when done.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Start recording failed");
+            _status = $"Recording failed: {ex.Message}";
+            _recordingSessionId = null;
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnStopRecordingClickedAsync()
+    {
+        var sessionId = _recordingSessionId;
+        if (_busy || sessionId is null)
+        {
+            return;
+        }
+        await RunCaptureAsync(async () =>
+        {
+            _status = "Finalising recording...";
+            StateHasChanged();
+            var dataUri = await JS.InvokeAsync<string>(
+                "pollmasterCapture.stopRecording", _cts.Token, sessionId);
+            _recordingSessionId = null;
+            await CaptureService.SaveAndShareAsync(dataUri, ".webm", "Pollmaster screen recording");
+            _status = "Recording ready — share sheet opened.";
+        }, failureStatus: "Recording could not be saved.");
+    }
+
+    private async Task RunCaptureAsync(Func<Task> work, string failureStatus)
+    {
+        _busy = true;
+        StateHasChanged();
+        try
+        {
+            await work();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "{Status}", failureStatus);
+            _status = $"{failureStatus} ({ex.Message})";
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
     }
 
     private static MapMarker ToMarker(StationOverviewDto overview)

@@ -263,7 +263,10 @@
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 18,
-            attribution: '&copy; OpenStreetMap contributors | Data: GIO&Sacute;'
+            attribution: '&copy; OpenStreetMap contributors | Data: GIO&Sacute;',
+            // crossOrigin lets html2canvas-based screenshots / recordings read the tile pixels
+            // (OSM serves Access-Control-Allow-Origin: * on the tile endpoint).
+            crossOrigin: true
         }).addTo(state.map);
 
         state.markerLayer = L.layerGroup().addTo(state.map);
