@@ -14,7 +14,9 @@ namespace Pollmaster.Api.Services;
 public sealed class OverviewService : IOverviewService
 {
     private const string CacheKey = "pollmaster:overview:all";
-    private const int MaxParallelSnapshots = 8;
+    private const int MaxParallelSnapshots = 3;
+    private const double MinPopulationRatioForFullTtl = 0.5;
+    private const int DegradedTtlSeconds = 30;
 
     private readonly IStationService _stations;
     private readonly IStationSnapshotService _snapshots;
@@ -66,9 +68,30 @@ public sealed class OverviewService : IOverviewService
         }
 
         var overviews = await BuildOverviewsAsync(stations.Value, cancellationToken).ConfigureAwait(false);
-        _cache.Set(CacheKey, overviews, TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds));
-        _logger.LogInformation("Computed overview for {Count} stations", overviews.Count);
+        var ttl = ResolveCacheTtl(overviews);
+        _cache.Set(CacheKey, overviews, ttl);
+        _logger.LogInformation(
+            "Computed overview for {Count} stations (cached for {Ttl}s)",
+            overviews.Count, ttl.TotalSeconds);
         return Result<IReadOnlyList<StationOverviewDto>>.Success(overviews);
+    }
+
+    /// <summary>
+    /// Use the full snapshot TTL only when at least half the stations have a real reading.
+    /// On a partial outage we cache for a short window so traffic recovers quickly once GIOŚ
+    /// stops throttling.
+    /// </summary>
+    private TimeSpan ResolveCacheTtl(IReadOnlyList<StationOverviewDto> overviews)
+    {
+        if (overviews.Count == 0)
+        {
+            return TimeSpan.FromSeconds(DegradedTtlSeconds);
+        }
+        var populated = overviews.Count(o => o.Pollutants.Count > 0);
+        var ratio = (double)populated / overviews.Count;
+        return ratio >= MinPopulationRatioForFullTtl
+            ? TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds)
+            : TimeSpan.FromSeconds(DegradedTtlSeconds);
     }
 
     private async Task<IReadOnlyList<StationOverviewDto>> BuildOverviewsAsync(
@@ -93,6 +116,17 @@ public sealed class OverviewService : IOverviewService
             return snapshot.IsSuccess
                 ? BuildFromSnapshot(snapshot.Value)
                 : BuildEmpty(station);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Polly circuit-breaker, rate-limit exhaustion or downstream JSON glitches must not
+            // tank the whole overview. Surface an empty entry for this station and move on.
+            _logger.LogWarning(ex, "Overview build failed for station {StationId}", station.Id);
+            return BuildEmpty(station);
         }
         finally
         {

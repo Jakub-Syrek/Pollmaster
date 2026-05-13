@@ -1,8 +1,10 @@
+using Polly;
 using Pollmaster.Api.Configuration;
 using Pollmaster.Api.Endpoints;
 using Pollmaster.Api.Gios;
 using Pollmaster.Api.Gios.Limits;
 using Pollmaster.Api.Gios.Mapping;
+using Pollmaster.Api.Gios.Throttling;
 using Pollmaster.Api.Services;
 
 const string CorsPolicy = "PollmasterCors";
@@ -37,6 +39,8 @@ builder.Services.AddScoped<IAirQualityIndexService, AirQualityIndexService>();
 builder.Services.AddScoped<IStationSnapshotService, StationSnapshotService>();
 builder.Services.AddScoped<IOverviewService, OverviewService>();
 
+builder.Services.AddSingleton<GiosRateLimitHandler>();
+
 builder.Services
     .AddHttpClient<IGiosApiClient, GiosApiClient>((sp, http) =>
     {
@@ -47,7 +51,24 @@ builder.Services
         http.DefaultRequestHeaders.Accept.Add(new("application/ld+json"));
         http.DefaultRequestHeaders.UserAgent.ParseAdd("Pollmaster/1.0 (+https://github.com/Jakub-Syrek/Pollmaster)");
     })
-    .AddStandardResilienceHandler();
+    .AddHttpMessageHandler<GiosRateLimitHandler>()
+    .AddStandardResilienceHandler(options =>
+    {
+        // GIOŚ throttles aggressively. Make the circuit breaker tolerant so transient 429
+        // bursts do not trip a hard open state that breaks the next ten minutes of traffic.
+        options.CircuitBreaker.MinimumThroughput = 200;
+        options.CircuitBreaker.FailureRatio = 0.9;
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(60);
+        options.CircuitBreaker.BreakDuration = TimeSpan.FromSeconds(15);
+
+        options.Retry.MaxRetryAttempts = 4;
+        options.Retry.BackoffType = DelayBackoffType.Exponential;
+        options.Retry.UseJitter = true;
+        options.Retry.Delay = TimeSpan.FromMilliseconds(500);
+
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(20);
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(120);
+    });
 
 builder.Services.AddCors(options =>
 {

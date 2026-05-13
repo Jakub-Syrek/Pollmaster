@@ -66,8 +66,15 @@ public sealed class GiosApiClient : IGiosApiClient
                 .ReadFromJsonAsync<T>(JsonOptions, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            // Real cancellation requested by the caller — bubble up cleanly.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Treat the entire HTTP/JSON surface (Polly circuit breaks, retries, rate-limit
+            // exhaustion, malformed payloads, transient network errors) as "no data".
             _logger.LogWarning(ex, "GIOŚ request failed: {Path}", relativeUrl);
             return null;
         }
