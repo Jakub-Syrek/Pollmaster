@@ -95,6 +95,14 @@ dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android
 
 ## Features
 
+### Capture
+- **Screenshot** button on the map renders the visible area (map + markers + popups +
+  heatmap) through `html2canvas` and hands the PNG to the platform share sheet.
+- **Record / Stop recording** buttons drive a 4 fps html2canvas snapshot loop fed into
+  a `MediaRecorder` WebM stream; the resulting clip is saved to the app's private
+  storage and shared via the platform sheet. No extra Android permissions needed —
+  the file lives under `FileSystem.AppDataDirectory/captures/`.
+
 ### Map UI
 - All ~290 Polish GIOŚ stations on a single Leaflet map
 - Markers coloured by **WHO-based severity** (highest pollutant ratio across the station's

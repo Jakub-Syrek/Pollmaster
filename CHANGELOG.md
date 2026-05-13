@@ -6,6 +6,21 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+- In-app screenshot and screen-recording captures. The map page now exposes
+  `Screenshot` and `Record` / `Stop recording` buttons that hand the result to the
+  platform share sheet, so the user can drop the PNG / WebM into the gallery or any
+  messenger without granting Pollmaster extra storage permissions.
+  - Screenshots use `html2canvas` on the map container — markers, popups, heatmaps and
+    the OSM base layer (now requested with `crossOrigin: true`) are all included.
+  - Recording feeds html2canvas snapshots at 4 fps into an offscreen `<canvas>` and
+    pipes its `captureStream` through `MediaRecorder` to WebM (VP9 or VP8 depending on
+    platform support). Choppy by design — the only cross-platform path that works in
+    both WebView2 and Android System WebView, which do not expose `getDisplayMedia`.
+  - `IMediaCaptureService` + `MediaCaptureService` write captures under
+    `FileSystem.AppDataDirectory/captures/pollmaster-<timestamp>.<ext>` and call
+    `Share.RequestAsync` so production builds do not need WRITE_EXTERNAL_STORAGE.
+
 ### Fixed
 - GIOŚ fan-out used to burst 8 parallel snapshot loads with no outbound throttling.
   GIOŚ responded with sustained `429 Too Many Requests`, Polly tripped the standard
