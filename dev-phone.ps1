@@ -42,7 +42,19 @@ param(
 
     [switch]$SkipConfig,
 
-    [switch]$SkipBackend
+    [switch]$SkipBackend,
+
+    # First-time wireless pairing target shown on the phone under Developer Options →
+    # Wireless debugging → Pair device with pairing code. Format: 192.168.0.123:41123.
+    [string]$PairWith,
+
+    # Six-digit code displayed alongside $PairWith on the phone screen.
+    [string]$PairCode,
+
+    # Already-paired wireless target the script should adb-connect to before deploy.
+    # Use the IP and port shown under Wireless debugging (NOT the pairing port).
+    # Format: 192.168.0.123:5555.
+    [string]$Connect
 )
 
 $ErrorActionPreference = 'Stop'
@@ -110,17 +122,26 @@ function Resolve-LanAddress {
 function Update-AndroidConfig {
     param([Parameter(Mandatory)][string]$IpAddress)
     if ($SkipConfig) {
-        Write-Section "Skipping appsettings.Android.json update (-SkipConfig)"
+        Write-Section 'Skipping appsettings.Android.json update (-SkipConfig)'
         return
     }
     Write-Section "Rewriting appsettings.Android.json to http://$IpAddress`:5100/"
     if (-not (Test-Path -LiteralPath $AndroidConfig)) {
         throw "Android config not found: $AndroidConfig"
     }
-    $config = Get-Content -LiteralPath $AndroidConfig -Raw | ConvertFrom-Json
-    $config.PollmasterApi.BaseAddress = "http://$IpAddress`:5100/"
-    $json = $config | ConvertTo-Json -Depth 5
-    Set-Content -LiteralPath $AndroidConfig -Value $json -Encoding UTF8
+
+    # Targeted regex substitution preserves the original indentation, the inline _comment
+    # block and avoids the ConvertTo-Json round-trip that reformats and escapes the file.
+    $content = Get-Content -LiteralPath $AndroidConfig -Raw
+    $newBaseAddress = "http://$IpAddress`:5100/"
+    $pattern = '"BaseAddress"\s*:\s*"[^"]*"'
+    $replacement = '"BaseAddress": "' + $newBaseAddress + '"'
+    $updated = [regex]::Replace($content, $pattern, $replacement)
+    if ($updated -eq $content) {
+        throw "Did not find a BaseAddress entry to update in $AndroidConfig."
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($AndroidConfig, $updated, $utf8NoBom)
 }
 
 function Resolve-AdbPath {
@@ -142,15 +163,97 @@ function Resolve-AdbPath {
     throw 'adb.exe was not found. Install Android SDK Platform-Tools or add adb to PATH.'
 }
 
+function Invoke-AdbQuietly {
+    <#
+    .DESCRIPTION
+    Calls adb with native-command error promotion temporarily disabled. adb routinely
+    writes informational lines ("* daemon not running; starting now ...") to stderr, and
+    PowerShell 7 with $ErrorActionPreference = 'Stop' would otherwise throw on them.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$AdbPath,
+        [Parameter(Mandatory)][string[]]$Arguments
+    )
+    $previousPolicy = $ErrorActionPreference
+    $previousNative = $null
+    $nativeFlagExists = Test-Path Variable:\PSNativeCommandUseErrorActionPreference
+    if ($nativeFlagExists) {
+        $previousNative = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $ErrorActionPreference = 'Continue'
+    try {
+        return & $AdbPath @Arguments 2>&1
+    }
+    finally {
+        $ErrorActionPreference = $previousPolicy
+        if ($nativeFlagExists) {
+            $PSNativeCommandUseErrorActionPreference = $previousNative
+        }
+    }
+}
+
+function Invoke-AdbPair {
+    param(
+        [Parameter(Mandatory)][string]$AdbPath,
+        [Parameter(Mandatory)][string]$Target,
+        [Parameter(Mandatory)][string]$Code
+    )
+    Write-Section "Pairing with $Target"
+    # adb pair reads the six-digit code from stdin; pipe it in so the script stays headless.
+    $previousPolicy = $ErrorActionPreference
+    $previousNative = $null
+    $nativeFlagExists = Test-Path Variable:\PSNativeCommandUseErrorActionPreference
+    if ($nativeFlagExists) {
+        $previousNative = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = $Code | & $AdbPath pair $Target 2>&1
+    }
+    finally {
+        $ErrorActionPreference = $previousPolicy
+        if ($nativeFlagExists) {
+            $PSNativeCommandUseErrorActionPreference = $previousNative
+        }
+    }
+    $lines = @($output | ForEach-Object { $_.ToString() })
+    Write-Host ($lines -join [Environment]::NewLine) -ForegroundColor DarkGray
+    if (-not ($lines -match 'Successfully paired')) {
+        throw "adb pair $Target failed. Re-open Wireless debugging on the phone to get a fresh code and port."
+    }
+}
+
+function Invoke-AdbConnect {
+    param(
+        [Parameter(Mandatory)][string]$AdbPath,
+        [Parameter(Mandatory)][string]$Target
+    )
+    Write-Section "Connecting wireless adb to $Target"
+    $output = Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('connect', $Target)
+    $lines = @($output | ForEach-Object { $_.ToString() })
+    Write-Host ($lines -join [Environment]::NewLine) -ForegroundColor DarkGray
+    if ($lines -match 'failed to connect|cannot connect') {
+        throw "adb connect $Target failed. Verify the IP/port shown under Wireless debugging."
+    }
+}
+
 function Assert-DeviceConnected {
     param([Parameter(Mandatory)][string]$AdbPath)
     Write-Section 'Looking for an authorised Android device'
-    $output = & $AdbPath devices
-    Write-Host ($output -join [Environment]::NewLine) -ForegroundColor DarkGray
-    $deviceLines = $output | Select-Object -Skip 1 |
+
+    # Pre-warm the adb daemon so the chatty first-run startup messages do not arrive
+    # interleaved with the "adb devices" output we actually want to parse.
+    Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('start-server') | Out-Null
+
+    $output = Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('devices')
+    $lines = @($output | ForEach-Object { $_.ToString() })
+    Write-Host ($lines -join [Environment]::NewLine) -ForegroundColor DarkGray
+    $deviceLines = $lines | Select-Object -Skip 1 |
         Where-Object { $_ -match '\t(device)$' }
     if (-not $deviceLines) {
-        throw 'No authorised device. Enable USB debugging, plug the phone in and accept the RSA prompt.'
+        throw 'No authorised device. Either plug the phone in via USB or pass -PairWith / -Connect to use Wireless debugging.'
     }
 }
 
@@ -203,6 +306,18 @@ Update-AndroidConfig -IpAddress $lanIp
 
 $adb = Resolve-AdbPath
 Write-Host "Using adb: $adb" -ForegroundColor Green
+
+if ($PairWith) {
+    if (-not $PairCode) {
+        throw '-PairWith requires -PairCode (the six-digit code shown on the phone).'
+    }
+    Invoke-AdbPair -AdbPath $adb -Target $PairWith -Code $PairCode
+}
+
+if ($Connect) {
+    Invoke-AdbConnect -AdbPath $adb -Target $Connect
+}
+
 Assert-DeviceConnected -AdbPath $adb
 
 Invoke-DotnetBuild -Project $ApiProjectPath
