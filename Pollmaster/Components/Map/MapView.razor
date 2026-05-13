@@ -16,6 +16,9 @@
         <h2>Pollmaster — Polish air-quality map</h2>
         <div class="map-page__actions">
             <button type="button" class="map-page__btn"
+                    @onclick="OnRefreshClickedAsync"
+                    disabled="@_busy">Refresh</button>
+            <button type="button" class="map-page__btn"
                     @onclick="OnScreenshotClickedAsync"
                     disabled="@_busy">Screenshot</button>
             @if (_recordingSessionId is null)
@@ -134,6 +137,16 @@
         await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
         _status = $"{markers.Length} stations loaded";
         StateHasChanged();
+    }
+
+    private async Task OnRefreshClickedAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+        await RunCaptureAsync(() => LoadOverviewAsync(_cts.Token),
+            failureStatus: "Refresh failed.");
     }
 
     private async Task OnScreenshotClickedAsync()
