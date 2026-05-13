@@ -143,18 +143,69 @@ dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android
 
 ## Architectural Strengths
 
-- **SOLID** — every service has one responsibility; mappers, gateways, severity calculator and
-  facades all live in separate types behind their own interfaces.
-- **Adapter pattern** — `Pollmaster.Api.Gios.Mapping.*` keeps the upstream Polish DTOs out of
-  every other layer, translating them to `Pollmaster.Shared.Contracts`.
-- **Facade pattern** — `StationSnapshotService` composes per-station data behind a single call
-  used by both popups and `OverviewService`.
-- **Gateway pattern** — `IGiosApiClient` isolates HTTP / JSON details. Its delegating-handler
-  chain (`GiosRateLimitHandler` → `Microsoft.Extensions.Http.Resilience`) absorbs throttling
-  and transient failures before they reach business logic.
-- **Dependency injection** — `Microsoft.Extensions.DependencyInjection` everywhere; no hidden
-  `new` for services inside consumers; HTTP clients via `IHttpClientFactory`.
-- **Strongly-typed options** — `GiosOptions`, `CorsOptions`, `ApiClientOptions`.
+### Design patterns
+
+- **Adapter** — `Pollmaster.Api.Gios.Mapping.*` translates the upstream Polish JSON-LD DTOs
+  to `Pollmaster.Shared.Contracts`, so nothing outside the gateway layer knows about
+  `"Lista stacji pomiarowych"` and the `WGS84 φ N` field name.
+- **Gateway** — `IGiosApiClient` owns HTTP and JSON. Two delegating handlers wrap it:
+  `GiosRateLimitHandler` (process-wide `SlidingWindowRateLimiter` shared via the singleton
+  `GiosRateLimiter`) and `Microsoft.Extensions.Http.Resilience` (retry, circuit breaker,
+  attempt + total timeouts).
+- **Facade** — `StationSnapshotService` composes station + sensors + readings + index into
+  a single `StationSnapshotDto` used by both the popup and the overview pipeline.
+- **Strategy** — pluggable rules behind interfaces: `IWhoLimitProvider` (the WHO 2021
+  guideline table), `ISeverityCalculator` (ratio → six-step palette bucket),
+  `IOverviewProjector` (snapshot → overview).
+- **Single-flight gate** — `OverviewService` serialises the expensive ~290-station GIOŚ
+  fan-out behind a static `SemaphoreSlim`. Concurrent callers re-check the cache after
+  the gate releases, so only one rebuild runs even under heavy concurrency.
+- **Cache hierarchy** — every request falls through:
+  in-memory `IMemoryCache` → `FileOverviewSnapshotStore` (disk) → GIOŚ fan-out. The
+  background `OverviewCacheWarmupService` keeps both layers warm.
+- **Background service** — `OverviewCacheWarmupService` (hosted) calls
+  `IOverviewService.RefreshIfStaleAsync` every 30 minutes; it consults the disk snapshot
+  first and skips the GIOŚ pull when the file is still fresh.
+
+### SOLID
+
+- **Single responsibility** — `OverviewService` owns caching and concurrency only; the
+  pure projection logic (severity, critical pollutant, ratio computation) lives in
+  `OverviewProjector`. Gateways, mappers, services, projectors and stores are all
+  separate types.
+- **Open / closed** — `ISeverityCalculator`, `IWhoLimitProvider` and `IOverviewProjector`
+  let you swap rule tables (e.g. EEA index instead of WHO) without touching the
+  orchestration code.
+- **Liskov** — the test suite substitutes `WhoLimitProvider` / `WhoSeverityCalculator`
+  directly into `OverviewProjector` and verifies behaviour without mocks.
+- **Interface segregation** — small focused interfaces (`IGiosApiClient`,
+  `IOverviewSnapshotStore`, `ISeverityCalculator`, `IOverviewProjector`,
+  `IPollmasterApiClient`).
+- **Dependency inversion** — `Microsoft.Extensions.DependencyInjection` everywhere;
+  HTTP clients via `IHttpClientFactory`, never `new HttpClient()`.
+
+### Performance & robustness
+
+- **Source-generated JSON** — `OverviewJsonContext : JsonSerializerContext` removes
+  reflection from the disk snapshot serialise / deserialise hot path used by the warmup
+  every 30 minutes.
+- **`Parallel.ForEachAsync` + `ConcurrentBag`** in the overview fan-out replaces the
+  manual `SemaphoreSlim` + `Task.WhenAll` allocation path with a single bounded loop
+  (`MaxDegreeOfParallelism = 3`).
+- **Outbound rate limiter** — sliding-window 30 req / 10 s budget shared across all
+  HTTP pipelines, well under the GIOŚ documented limits.
+- **HTTP 400 = no-data** — the gateway treats 400 from `/data/getData` as "retired
+  sensor", caches an empty result, and stops the rate-limit storm that used to fire on
+  every overview rebuild.
+- **`Result<T>` discriminated union** — expected failures travel as values, exceptions
+  are reserved for genuine bugs. The gateway also catches *every* HTTP-side error
+  (including Polly `BrokenCircuitException`) so one bad station never tanks the whole
+  fan-out.
+- **Centralised cache vocabulary** — every cache key is one `CacheKeys` constant or
+  factory method, no drift between services.
+- **Strongly-typed options** — `GiosOptions`, `CorsOptions`, `ApiClientOptions`,
+  `OverviewWarmupOptions`, `OverviewPersistenceOptions`, all bound with
+  `ValidateOnStart`.
 
 ## Feature Matrix
 
