@@ -6,6 +6,26 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+- `GET /api/overview` returns a lightweight per-station projection with WHO-derived
+  severity bucket, the critical pollutant code and the per-pollutant ratios. Used
+  by the MAUI map for both marker colours and the heatmap layers.
+- WHO 2021 short-term guideline lookup behind `IWhoLimitProvider` and the
+  matching `ISeverityCalculator` mapping ratios to the GIOŚ six-step palette;
+  both registered as singletons.
+- `OverviewService` orchestrates per-station snapshots with bounded concurrency
+  (SemaphoreSlim, 8 parallel) and caches the merged result for `SnapshotTtlSeconds`.
+- Leaflet.heat 0.2.0 vendored under `wwwroot/lib/leaflet/` and a new layer
+  switcher in the map UI (Markers / PM10 / PM2.5 / NO2 / SO2 / O3). Selected
+  pollutant renders an animated heatmap with a WHO-aligned colour gradient.
+- Severe stations (Bad / Very bad) now pulse with a coloured halo so they stand
+  out at lower zoom levels.
+
+### Changed
+- Map markers are coloured by the new severity bucket instead of the upstream
+  AQ index, so stations without a full GIOŚ index but with real readings (e.g.
+  Niepołomice — PM10 only) finally show a meaningful colour.
+
 ### Fixed
 - MapView passed the `MapMarker[]` to `JS.InvokeVoidAsync` directly, where C#'s
   `params object?[]` overload would unpack each element into its own JS argument
