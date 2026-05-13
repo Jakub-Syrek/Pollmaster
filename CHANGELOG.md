@@ -6,6 +6,26 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Fixed
+- GIOŚ fan-out used to burst 8 parallel snapshot loads with no outbound throttling.
+  GIOŚ responded with sustained `429 Too Many Requests`, Polly tripped the standard
+  resilience circuit breaker, and every following call returned `BrokenCircuitException`.
+  The new outbound `GiosRateLimitHandler` (SlidingWindowRateLimiter, 30 req per 10s)
+  keeps the GIOŚ side healthy; the resilience pipeline is reconfigured with a higher
+  circuit-breaker minimum throughput and tolerance for transient retries.
+- `GiosApiClient.GetAsync` only caught `HttpRequestException / TaskCanceledException /
+  JsonException`. Polly's `BrokenCircuitException` flew through and crashed the overview
+  call. The catch is now exhaustive (still re-throws genuine caller cancellations).
+- `OverviewService.BuildSingleAsync` had no per-station fault isolation, so one bad
+  snapshot tanked the whole `/api/overview` response. Failures are now logged at warning
+  and surfaced as empty entries; the rest of the map still renders.
+
+### Changed
+- Overview fan-out concurrency dropped from 8 to 3 parallel snapshot fetches, matching
+  the documented GIOŚ budget more conservatively.
+- Overview cache TTL drops to 30 s when fewer than half the stations carry data so the
+  app does not get stuck on a degraded snapshot once GIOŚ recovers.
+
 ### Added
 - `GET /api/overview` returns a lightweight per-station projection with WHO-derived
   severity bucket, the critical pollutant code and the per-pollutant ratios. Used
