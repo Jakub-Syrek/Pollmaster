@@ -2,11 +2,16 @@
 (function () {
     'use strict';
 
+    const HEATMAP_POLLUTANTS = ['PM10', 'PM2.5', 'NO2', 'SO2', 'O3'];
+
     const state = {
         map: null,
         markerLayer: null,
+        heatLayer: null,
         markers: new Map(),
-        dotnetRef: null
+        stations: [],
+        dotnetRef: null,
+        activeLayer: 'markers'
     };
 
     const AQ_LABELS = {
@@ -21,7 +26,6 @@
 
     // WHO 2021 short-term air-quality guideline values (μg/m³, 24h or 8h). Used as the
     // 100%-fill point on the per-pollutant bar. Values above the guideline render red.
-    // Source: WHO global air-quality guidelines 2021, Polish national standard for BaP.
     const POLLUTANT_LIMITS = {
         'PM10': 45,
         'PM2.5': 15,
@@ -31,6 +35,14 @@
         'CO': 4000,
         'C6H6': 5,
         'BaP(PM10)': 0.001
+    };
+
+    const HEAT_GRADIENT = {
+        0.0: '#57b108',
+        0.25: '#b0dd10',
+        0.5: '#ffd911',
+        0.75: '#e58100',
+        1.0: '#b21f00'
     };
 
     function indexClass(value) {
@@ -61,8 +73,8 @@
     }
 
     function popupSkeleton(station) {
-        const indexHtml = '<span class="aq-popup__index ' + indexClass(station.indexLevel) +
-            '">' + escapeHtml(indexLabel(station.indexLevel)) + '</span>';
+        const indexHtml = '<span class="aq-popup__index ' + indexClass(station.severity) +
+            '">' + escapeHtml(indexLabel(station.severity)) + '</span>';
         return '<div class="aq-popup">' +
             '<div class="aq-popup__title">' + escapeHtml(station.name) + '</div>' +
             '<div class="aq-popup__city">' + escapeHtml(station.city || '') + '</div>' +
@@ -136,13 +148,106 @@
         return '<ul class="aq-popup__sensors">' + items + '</ul>';
     }
 
-    function buildIcon(level) {
+    function buildIcon(station) {
+        const severityClass = indexClass(station.severity);
+        const pulse = station.severity >= 4 ? ' aq-marker--pulse' : '';
         return L.divIcon({
             className: '',
-            html: '<div class="aq-marker ' + indexClass(level) + '"></div>',
+            html: '<div class="aq-marker ' + severityClass + pulse + '"></div>',
             iconSize: [22, 22],
             iconAnchor: [11, 11]
         });
+    }
+
+    function findPollutantRatio(station, code) {
+        if (!station.pollutants) {
+            return null;
+        }
+        for (const p of station.pollutants) {
+            if (p.code === code && p.ratio !== null && p.ratio !== undefined) {
+                return p.ratio;
+            }
+        }
+        return null;
+    }
+
+    function buildHeatPoints(pollutantCode) {
+        const points = [];
+        for (const station of state.stations) {
+            const ratio = findPollutantRatio(station, pollutantCode);
+            if (ratio === null) {
+                continue;
+            }
+            // Clamp intensity to the [0, 2] range so Leaflet.heat normalizes against the gradient.
+            const intensity = Math.min(Math.max(ratio, 0), 2);
+            points.push([station.latitude, station.longitude, intensity]);
+        }
+        return points;
+    }
+
+    function buildHeatLayer(pollutantCode) {
+        const points = buildHeatPoints(pollutantCode);
+        if (points.length === 0) {
+            return null;
+        }
+        return L.heatLayer(points, {
+            radius: 38,
+            blur: 28,
+            maxZoom: 11,
+            max: 1.5,
+            minOpacity: 0.4,
+            gradient: HEAT_GRADIENT
+        });
+    }
+
+    function setLayer(layerKey) {
+        if (!state.map) {
+            return;
+        }
+        state.activeLayer = layerKey;
+        if (state.heatLayer) {
+            state.map.removeLayer(state.heatLayer);
+            state.heatLayer = null;
+        }
+        if (layerKey === 'markers') {
+            state.map.addLayer(state.markerLayer);
+            return;
+        }
+        state.map.removeLayer(state.markerLayer);
+        const heat = buildHeatLayer(layerKey);
+        if (heat) {
+            heat.addTo(state.map);
+            state.heatLayer = heat;
+        }
+    }
+
+    function buildLayerControl() {
+        const control = L.control({ position: 'topright' });
+        control.onAdd = function () {
+            const wrapper = L.DomUtil.create('div', 'aq-layer-switch leaflet-bar');
+            const buttons = [{ key: 'markers', label: 'Markers' }]
+                .concat(HEATMAP_POLLUTANTS.map(code => ({ key: code, label: code })));
+
+            buttons.forEach(function (btn) {
+                const node = L.DomUtil.create('button', 'aq-layer-switch__btn', wrapper);
+                node.type = 'button';
+                node.textContent = btn.label;
+                node.dataset.key = btn.key;
+                if (btn.key === state.activeLayer) {
+                    node.classList.add('aq-layer-switch__btn--active');
+                }
+                L.DomEvent.disableClickPropagation(node);
+                L.DomEvent.on(node, 'click', function () {
+                    wrapper.querySelectorAll('.aq-layer-switch__btn').forEach(function (b) {
+                        b.classList.remove('aq-layer-switch__btn--active');
+                    });
+                    node.classList.add('aq-layer-switch__btn--active');
+                    setLayer(btn.key);
+                });
+            });
+            return wrapper;
+        };
+        return control;
     }
 
     function initMap(elementId, dotnetRef) {
@@ -162,6 +267,7 @@
         }).addTo(state.map);
 
         state.markerLayer = L.layerGroup().addTo(state.map);
+        buildLayerControl().addTo(state.map);
     }
 
     function addStations(stations) {
@@ -170,12 +276,14 @@
         }
         state.markerLayer.clearLayers();
         state.markers.clear();
-        stations.forEach(function (station) {
+        state.stations = Array.isArray(stations) ? stations : [];
+
+        state.stations.forEach(function (station) {
             if (station.latitude === null || station.longitude === null) {
                 return;
             }
             const marker = L.marker([station.latitude, station.longitude], {
-                icon: buildIcon(station.indexLevel)
+                icon: buildIcon(station)
             });
             marker.bindPopup(popupSkeleton(station));
             marker.on('popupopen', function () {
@@ -187,6 +295,11 @@
             marker.addTo(state.markerLayer);
             state.markers.set(station.id, marker);
         });
+
+        // If a heatmap layer is currently active, rebuild it now that data is loaded.
+        if (state.activeLayer !== 'markers') {
+            setLayer(state.activeLayer);
+        }
     }
 
     function updateStationSensors(stationId, sensors) {
@@ -214,8 +327,11 @@
         }
         state.map = null;
         state.markerLayer = null;
+        state.heatLayer = null;
         state.markers.clear();
+        state.stations = [];
         state.dotnetRef = null;
+        state.activeLayer = 'markers';
     }
 
     window.pollmasterMap = {

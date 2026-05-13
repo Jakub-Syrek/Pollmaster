@@ -150,3 +150,71 @@ html, body, #app {
 .aq-color-4 { background: #b21f00; }
 .aq-color-5 { background: #990000; }
 .aq-color--unknown { background: #888; }
+
+/* Severe stations pulse to draw attention even at lower zoom levels. */
+.aq-marker--pulse {
+    position: relative;
+    animation: aq-marker-core-pulse 2s ease-in-out infinite;
+}
+
+.aq-marker--pulse::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    color: inherit;
+    opacity: 0.7;
+    animation: aq-marker-halo 1.8s ease-out infinite;
+    pointer-events: none;
+}
+
+.aq-color-4.aq-marker--pulse::after { box-shadow: 0 0 12px #b21f00; }
+.aq-color-5.aq-marker--pulse::after { box-shadow: 0 0 16px #990000; }
+
+@keyframes aq-marker-core-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.15); }
+}
+
+@keyframes aq-marker-halo {
+    0% { transform: scale(0.8); opacity: 0.8; }
+    100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Layer switcher (Markers / per-pollutant heatmap) — sits in top-right corner. */
+.aq-layer-switch {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(6px);
+    border-radius: 6px;
+    padding: 2px;
+    display: flex;
+    gap: 2px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.aq-layer-switch__btn {
+    border: none;
+    background: transparent;
+    color: #333;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.aq-layer-switch__btn:hover {
+    background: rgba(46, 125, 50, 0.12);
+}
+
+.aq-layer-switch__btn--active {
+    background: #2e7d32;
+    color: #fff;
+}
+
+.aq-layer-switch__btn--active:hover {
+    background: #1b5e20;
+    color: #fff;
+}
