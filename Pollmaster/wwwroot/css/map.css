@@ -10,25 +10,31 @@ html, body, #app {
 }
 
 .map-page__header {
-    padding: 0.5rem 1rem;
+    padding: 0.5rem 0.75rem;
     background: #2e7d32;
     color: #fff;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    gap: 0.4rem 0.75rem;
     flex: 0 0 auto;
 }
 
 .map-page__header h2 {
-    font-size: 1.1rem;
+    font-size: 1rem;
     margin: 0;
-    flex: 0 0 auto;
+    flex: 1 1 8rem;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .map-page__actions {
     display: flex;
-    gap: 0.4rem;
-    flex: 0 0 auto;
+    gap: 0.35rem;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
 }
 
 .map-page__btn {
@@ -36,10 +42,11 @@ html, body, #app {
     color: #fff;
     border: 1px solid rgba(255, 255, 255, 0.35);
     border-radius: 4px;
-    padding: 0.25rem 0.7rem;
-    font-size: 0.8rem;
+    padding: 0.25rem 0.65rem;
+    font-size: 0.78rem;
     cursor: pointer;
     transition: background 0.15s ease, opacity 0.15s ease;
+    white-space: nowrap;
 }
 
 .map-page__btn:hover:not([disabled]) {
@@ -67,9 +74,25 @@ html, body, #app {
 }
 
 .map-page__status {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     opacity: 0.9;
-    margin-left: auto;
+    flex: 1 1 100%;
+    margin: 0;
+}
+
+@media (min-width: 720px) {
+    .map-page__header h2 {
+        font-size: 1.1rem;
+    }
+    .map-page__btn {
+        padding: 0.25rem 0.7rem;
+        font-size: 0.8rem;
+    }
+    .map-page__status {
+        font-size: 0.85rem;
+        flex: 0 1 auto;
+        margin-left: auto;
+    }
 }
 
 .map-page__container {
