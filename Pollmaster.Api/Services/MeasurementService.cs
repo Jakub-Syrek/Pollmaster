@@ -46,15 +46,15 @@ public sealed class MeasurementService : IMeasurementService
         }
 
         var response = await _client.GetMeasurementsAsync(sensorId, cancellationToken).ConfigureAwait(false);
-        if (response is null)
-        {
-            return Result<SensorReadingsDto>.Failure($"Failed to load measurements for sensor {sensorId}.");
-        }
-
-        var dto = _mapper.Map(sensorId, response);
+        var dto = response is null
+            ? EmptyReadings(sensorId)
+            : _mapper.Map(sensorId, response);
         _cache.Set(key, dto, TimeSpan.FromSeconds(_cacheOptions.MeasurementsTtlSeconds));
         return Result<SensorReadingsDto>.Success(dto);
     }
+
+    private static SensorReadingsDto EmptyReadings(int sensorId) =>
+        new(sensorId, string.Empty, "μg/m³", Array.Empty<MeasurementDto>());
 
     private static string CacheKey(int sensorId) => $"pollmaster:readings:{sensorId}";
 }

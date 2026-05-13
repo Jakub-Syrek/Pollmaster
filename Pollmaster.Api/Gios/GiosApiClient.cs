@@ -61,6 +61,16 @@ public sealed class GiosApiClient : IGiosApiClient
         try
         {
             using var response = await _http.GetAsync(relativeUrl, cancellationToken).ConfigureAwait(false);
+
+            // GIOŚ uses HTTP 400 in place of 404 for retired / no-data sensors on the
+            // /data/getData and similar endpoints. Treat it as "no data" so callers can
+            // cache an empty result and stop hammering the rate limiter on every overview.
+            if ((int)response.StatusCode == 400)
+            {
+                _logger.LogDebug("GIOŚ returned 400 (treated as no data): {Path}", relativeUrl);
+                return null;
+            }
+
             response.EnsureSuccessStatusCode();
             return await response.Content
                 .ReadFromJsonAsync<T>(JsonOptions, cancellationToken)

@@ -47,18 +47,15 @@ public sealed class SensorService : ISensorService
         }
 
         var response = await _client.GetSensorsAsync(stationId, cancellationToken).ConfigureAwait(false);
-        if (response is null)
-        {
-            return Result<IReadOnlyList<SensorDto>>.Failure($"Failed to load sensors for station {stationId}.");
-        }
-
-        var sensors = (response.Sensors ?? new List<SensorItem>())
+        var sensors = (response?.Sensors ?? new List<SensorItem>())
             .Select(_mapper.Map)
             .Where(static s => s is not null)
             .Select(static s => s!)
             .ToList();
 
         IReadOnlyList<SensorDto> readOnly = sensors;
+        // Cache the result even when GIOŚ returned no sensors (HTTP 400 / null) so the
+        // next overview pass does not retry through the rate-limit queue.
         _cache.Set(key, readOnly, TimeSpan.FromMinutes(_cacheOptions.SensorsTtlMinutes));
         return Result<IReadOnlyList<SensorDto>>.Success(readOnly);
     }
