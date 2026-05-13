@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Pollmaster.Api.Configuration;
 using Pollmaster.Api.Gios.Limits;
+using Pollmaster.Api.Persistence;
 using Pollmaster.Shared.Common;
 using Pollmaster.Shared.Contracts;
 
@@ -23,7 +24,9 @@ public sealed class OverviewService : IOverviewService
     private readonly IWhoLimitProvider _limits;
     private readonly ISeverityCalculator _severity;
     private readonly IMemoryCache _cache;
+    private readonly IOverviewSnapshotStore _snapshotStore;
     private readonly GiosCacheOptions _cacheOptions;
+    private readonly OverviewPersistenceOptions _persistenceOptions;
     private readonly ILogger<OverviewService> _logger;
 
     /// <summary>Construct the overview service.</summary>
@@ -31,8 +34,10 @@ public sealed class OverviewService : IOverviewService
     /// <param name="snapshots">Station snapshot facade.</param>
     /// <param name="limits">WHO limit provider.</param>
     /// <param name="severity">Severity bucket calculator.</param>
-    /// <param name="cache">Memory cache.</param>
+    /// <param name="cache">In-memory cache.</param>
+    /// <param name="snapshotStore">Disk-backed snapshot store.</param>
     /// <param name="options">GIOŚ options snapshot.</param>
+    /// <param name="persistenceOptions">Persistence options snapshot.</param>
     /// <param name="logger">Logger.</param>
     public OverviewService(
         IStationService stations,
@@ -40,16 +45,21 @@ public sealed class OverviewService : IOverviewService
         IWhoLimitProvider limits,
         ISeverityCalculator severity,
         IMemoryCache cache,
+        IOverviewSnapshotStore snapshotStore,
         IOptions<GiosOptions> options,
+        IOptions<OverviewPersistenceOptions> persistenceOptions,
         ILogger<OverviewService> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(persistenceOptions);
         _stations = stations ?? throw new ArgumentNullException(nameof(stations));
         _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
         _limits = limits ?? throw new ArgumentNullException(nameof(limits));
         _severity = severity ?? throw new ArgumentNullException(nameof(severity));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
         _cacheOptions = options.Value.Cache;
+        _persistenceOptions = persistenceOptions.Value;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -58,11 +68,20 @@ public sealed class OverviewService : IOverviewService
         CancellationToken cancellationToken,
         bool forceRefresh = false)
     {
-        if (!forceRefresh &&
-            _cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? cached) &&
-            cached is not null)
+        if (!forceRefresh)
         {
-            return Result<IReadOnlyList<StationOverviewDto>>.Success(cached);
+            if (_cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? cached) &&
+                cached is not null)
+            {
+                return Result<IReadOnlyList<StationOverviewDto>>.Success(cached);
+            }
+
+            var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
+            if (persisted is not null)
+            {
+                _cache.Set(CacheKey, persisted, TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds));
+                return Result<IReadOnlyList<StationOverviewDto>>.Success(persisted);
+            }
         }
 
         var stations = await _stations.GetStationsAsync(cancellationToken).ConfigureAwait(false);
@@ -74,10 +93,59 @@ public sealed class OverviewService : IOverviewService
         var overviews = await BuildOverviewsAsync(stations.Value, cancellationToken).ConfigureAwait(false);
         var ttl = ResolveCacheTtl(overviews);
         _cache.Set(CacheKey, overviews, ttl);
+
+        await PersistAsync(overviews, cancellationToken).ConfigureAwait(false);
+
         _logger.LogInformation(
             "Computed overview for {Count} stations (cached for {Ttl}s)",
             overviews.Count, ttl.TotalSeconds);
         return Result<IReadOnlyList<StationOverviewDto>>.Success(overviews);
+    }
+
+    private async Task<IReadOnlyList<StationOverviewDto>?> TryLoadPersistedAsync(CancellationToken cancellationToken)
+    {
+        OverviewSnapshot? snapshot;
+        try
+        {
+            snapshot = await _snapshotStore.LoadLatestAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load overview snapshot from disk");
+            return null;
+        }
+        if (snapshot is null)
+        {
+            return null;
+        }
+        var age = DateTime.UtcNow - snapshot.GeneratedAt;
+        if (age.TotalMinutes > _persistenceOptions.FreshnessMinutes)
+        {
+            _logger.LogInformation(
+                "Disk snapshot is {AgeMinutes:F1} min old (max {Max} min), rebuilding from GIOŚ.",
+                age.TotalMinutes, _persistenceOptions.FreshnessMinutes);
+            return null;
+        }
+        _logger.LogInformation(
+            "Serving overview from disk snapshot generated {AgeMinutes:F1} min ago ({Count} stations)",
+            age.TotalMinutes, snapshot.Stations.Count);
+        return snapshot.Stations;
+    }
+
+    private async Task PersistAsync(IReadOnlyList<StationOverviewDto> overviews, CancellationToken cancellationToken)
+    {
+        if (overviews.Count == 0)
+        {
+            return;
+        }
+        try
+        {
+            await _snapshotStore.SaveAsync(overviews, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist overview snapshot to disk");
+        }
     }
 
     /// <summary>

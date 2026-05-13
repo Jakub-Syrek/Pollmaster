@@ -38,6 +38,9 @@ Desktop.ini
 *.log
 logs/
 
+# Pollmaster.Api disk snapshot cache
+cache/
+
 # User secrets (never commit)
 secrets.json
 

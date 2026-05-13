@@ -5,6 +5,7 @@ using Pollmaster.Api.Gios;
 using Pollmaster.Api.Gios.Limits;
 using Pollmaster.Api.Gios.Mapping;
 using Pollmaster.Api.Gios.Throttling;
+using Pollmaster.Api.Persistence;
 using Pollmaster.Api.Services;
 
 const string CorsPolicy = "PollmasterCors";
@@ -30,12 +31,18 @@ builder.Services
     .Bind(builder.Configuration.GetSection(OverviewWarmupOptions.SectionName))
     .ValidateOnStart();
 
+builder.Services
+    .AddOptions<OverviewPersistenceOptions>()
+    .Bind(builder.Configuration.GetSection(OverviewPersistenceOptions.SectionName))
+    .ValidateOnStart();
+
 builder.Services.AddSingleton<IStationMapper, StationMapper>();
 builder.Services.AddSingleton<ISensorMapper, SensorMapper>();
 builder.Services.AddSingleton<IMeasurementMapper, MeasurementMapper>();
 builder.Services.AddSingleton<IAirQualityIndexMapper, AirQualityIndexMapper>();
 builder.Services.AddSingleton<IWhoLimitProvider, WhoLimitProvider>();
 builder.Services.AddSingleton<ISeverityCalculator, WhoSeverityCalculator>();
+builder.Services.AddSingleton<IOverviewSnapshotStore, FileOverviewSnapshotStore>();
 
 builder.Services.AddScoped<IStationService, StationService>();
 builder.Services.AddScoped<ISensorService, SensorService>();
