@@ -43,7 +43,18 @@
 
 @code {
     private const string MapContainerElementId = "pollmaster-map";
-    private const int RecordingFps = 4;
+
+    // Screenshot uses native retina-grade oversampling (2x). The map renders at CSS
+    // resolution; html2canvas multiplies that by ScreenshotScale before rasterising.
+    private const double ScreenshotScale = 2.0;
+
+    // Recording knobs — chosen so the 8 fps loop stays inside the CPU budget on an
+    // Android phone while still producing a noticeably smoother result than the original
+    // 4 fps capture. Bitrate is generous (6 Mbps) so the VP8/VP9 encoder does not chew
+    // detail away from the marker overlays.
+    private const int RecordingFps = 8;
+    private const double RecordingScale = 1.5;
+    private const int RecordingBitsPerSecond = 6_000_000;
 
     private ElementReference _mapElement;
     private DotNetObjectReference<MapView>? _dotnetRef;
@@ -160,7 +171,7 @@
             _status = "Capturing screenshot...";
             StateHasChanged();
             var dataUri = await JS.InvokeAsync<string>(
-                "pollmasterCapture.captureScreenshot", _cts.Token, MapContainerElementId);
+                "pollmasterCapture.captureScreenshot", _cts.Token, MapContainerElementId, ScreenshotScale);
             await CaptureService.SaveAndShareAsync(dataUri, ".png", "Pollmaster screenshot");
             _status = "Screenshot ready — share sheet opened.";
         }, failureStatus: "Screenshot failed.");
@@ -175,10 +186,15 @@
         _busy = true;
         try
         {
-            _status = $"Starting recording at {RecordingFps} fps...";
+            _status = $"Starting recording at {RecordingFps} fps ({RecordingScale}x)...";
             StateHasChanged();
             _recordingSessionId = await JS.InvokeAsync<string>(
-                "pollmasterCapture.startRecording", _cts.Token, MapContainerElementId, RecordingFps);
+                "pollmasterCapture.startRecording",
+                _cts.Token,
+                MapContainerElementId,
+                RecordingFps,
+                RecordingScale,
+                RecordingBitsPerSecond);
             _status = "Recording — tap Stop when done.";
         }
         catch (Exception ex)
