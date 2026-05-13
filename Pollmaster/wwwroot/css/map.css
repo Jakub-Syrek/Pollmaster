@@ -11,7 +11,7 @@ html, body, #app {
 
 .map-page__header {
     padding: 0.5rem 0.75rem;
-    background: #2e7d32;
+    background: #1976d2;
     color: #fff;
     display: flex;
     flex-wrap: wrap;
@@ -168,7 +168,7 @@ html, body, #app {
 }
 
 .aq-popup__sensor-value {
-    color: #2e7d32;
+    color: #1976d2;
     font-weight: 600;
     white-space: nowrap;
 }
@@ -272,15 +272,15 @@ html, body, #app {
 }
 
 .aq-layer-switch__btn:hover {
-    background: rgba(46, 125, 50, 0.12);
+    background: rgba(25, 118, 210, 0.12);
 }
 
 .aq-layer-switch__btn--active {
-    background: #2e7d32;
+    background: #1976d2;
     color: #fff;
 }
 
 .aq-layer-switch__btn--active:hover {
-    background: #1b5e20;
+    background: #1565c0;
     color: #fff;
 }
