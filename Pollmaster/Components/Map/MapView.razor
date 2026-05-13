@@ -55,13 +55,13 @@
         var snapshot = await ApiClient.GetStationSnapshotAsync(stationId, _cts.Token);
         if (snapshot.IsFailure)
         {
-            await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, Array.Empty<MapMarkerSensor>());
+            await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, (object)Array.Empty<MapMarkerSensor>());
             return;
         }
         var payload = snapshot.Value.Sensors
             .Select(s => new MapMarkerSensor(s.Code, s.Value, s.Unit))
             .ToArray();
-        await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, payload);
+        await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, (object)payload);
     }
 
     /// <inheritdoc />
@@ -93,7 +93,9 @@
         }
 
         var markers = result.Value.Select(ToMarker).ToArray();
-        await JS.InvokeVoidAsync("pollmasterMap.addStations", markers);
+        // Cast to object so the params object?[] resolves to a single argument
+        // (the array) instead of unpacking the markers into individual JS args.
+        await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
         _status = $"{markers.Length} stations loaded";
         StateHasChanged();
     }
