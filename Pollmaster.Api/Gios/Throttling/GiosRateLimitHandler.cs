@@ -1,42 +1,21 @@
-using System.Threading.RateLimiting;
-
 namespace Pollmaster.Api.Gios.Throttling;
 
 /// <summary>
-/// Outbound HTTP rate-limiter for the GIOŚ client. Backed by a process-wide
-/// <see cref="SlidingWindowRateLimiter"/> so concurrent overview / snapshot fan-outs share
-/// the same budget. Tuned well under the documented limits (1500 req/min for current data,
-/// 2 req/min for archive) so we never trigger the upstream 429 on healthy workloads.
+/// Outbound HTTP rate-limiter for the GIOŚ client. Forwards every request through a
+/// process-wide <see cref="GiosRateLimiter"/> budget so concurrent overview / snapshot
+/// fan-outs share the same permit pool. The handler itself is transient — one instance
+/// per HttpClient pipeline — because <see cref="DelegatingHandler"/> instances cannot be
+/// reused across pipelines.
 /// </summary>
-public sealed class GiosRateLimitHandler : DelegatingHandler, IAsyncDisposable
+public sealed class GiosRateLimitHandler : DelegatingHandler
 {
-    private readonly SlidingWindowRateLimiter _limiter;
+    private readonly GiosRateLimiter _limiter;
 
-    /// <summary>Construct the handler with default limits (30 requests per 10-second window).</summary>
-    public GiosRateLimitHandler()
-        : this(permitLimit: 30, window: TimeSpan.FromSeconds(10))
+    /// <summary>Construct the handler.</summary>
+    /// <param name="limiter">Shared rate-limit budget.</param>
+    public GiosRateLimitHandler(GiosRateLimiter limiter)
     {
-    }
-
-    /// <summary>Construct the handler with custom limits.</summary>
-    /// <param name="permitLimit">Maximum requests inside the sliding window.</param>
-    /// <param name="window">Length of the sliding window.</param>
-    public GiosRateLimitHandler(int permitLimit, TimeSpan window)
-    {
-        if (permitLimit <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(permitLimit), "Permit limit must be positive.");
-        }
-
-        _limiter = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
-        {
-            PermitLimit = permitLimit,
-            Window = window,
-            SegmentsPerWindow = 5,
-            QueueLimit = int.MaxValue,
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-            AutoReplenishment = true
-        });
+        _limiter = limiter ?? throw new ArgumentNullException(nameof(limiter));
     }
 
     /// <inheritdoc />
@@ -45,7 +24,7 @@ public sealed class GiosRateLimitHandler : DelegatingHandler, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        using var lease = await _limiter.AcquireAsync(1, cancellationToken).ConfigureAwait(false);
+        using var lease = await _limiter.AcquireAsync(cancellationToken).ConfigureAwait(false);
         if (!lease.IsAcquired)
         {
             throw new HttpRequestException(
@@ -54,21 +33,5 @@ public sealed class GiosRateLimitHandler : DelegatingHandler, IAsyncDisposable
                 statusCode: System.Net.HttpStatusCode.TooManyRequests);
         }
         return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    public async ValueTask DisposeAsync()
-    {
-        await _limiter.DisposeAsync().ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            _limiter.Dispose();
-        }
-        base.Dispose(disposing);
     }
 }

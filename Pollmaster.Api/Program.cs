@@ -46,7 +46,8 @@ builder.Services.AddScoped<IOverviewService, OverviewService>();
 
 builder.Services.AddHostedService<OverviewCacheWarmupService>();
 
-builder.Services.AddSingleton<GiosRateLimitHandler>();
+builder.Services.AddSingleton<GiosRateLimiter>();
+builder.Services.AddTransient<GiosRateLimitHandler>();
 
 builder.Services
     .AddHttpClient<IGiosApiClient, GiosApiClient>((sp, http) =>
