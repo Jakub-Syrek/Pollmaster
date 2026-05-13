@@ -1,0 +1,52 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+# .NET
+*.dll
+*.pdb
+*.exe
+*.dll.config
+
+# MAUI / mobile
+*.apk
+*.aab
+*.app
+*.ipa
+*.dSYM/
+publish/
+*.binlog
+
+# Test output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# OS
+Thumbs.db
+ehthumbs.db
+.DS_Store
+Desktop.ini
+
+# Logs
+*.log
+logs/
+
+# User secrets (never commit)
+secrets.json
+
+# Generated NuGet
+*.nupkg
+*.snupkg
+.nuget/packages/
+
+# Rider / ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user

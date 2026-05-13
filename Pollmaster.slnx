@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Pollmaster.Api.Tests/Pollmaster.Api.Tests.csproj" />
+  <Project Path="Pollmaster.Api/Pollmaster.Api.csproj" />
+  <Project Path="Pollmaster.Shared/Pollmaster.Shared.csproj" />
+  <Project Path="Pollmaster/Pollmaster.csproj" />
+</Solution>
