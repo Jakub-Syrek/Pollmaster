@@ -8,10 +8,10 @@ namespace Pollmaster.Services;
 /// </summary>
 public interface IPollmasterApiClient
 {
-    /// <summary>Fetch all stations.</summary>
+    /// <summary>Fetch the lightweight per-station overview (positions, severity, pollutants).</summary>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Station list.</returns>
-    Task<Result<IReadOnlyList<StationDto>>> GetStationsAsync(CancellationToken cancellationToken);
+    /// <returns>Overview list.</returns>
+    Task<Result<IReadOnlyList<StationOverviewDto>>> GetOverviewAsync(CancellationToken cancellationToken);
 
     /// <summary>Fetch a composite per-station snapshot used by the map popup.</summary>
     /// <param name="stationId">GIOŚ station id.</param>

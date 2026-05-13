@@ -38,7 +38,7 @@
         {
             _dotnetRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("pollmasterMap.initMap", "pollmaster-map", _dotnetRef);
-            await LoadStationsAsync(_cts.Token);
+            await LoadOverviewAsync(_cts.Token);
         }
         catch (Exception ex)
         {
@@ -55,7 +55,8 @@
         var snapshot = await ApiClient.GetStationSnapshotAsync(stationId, _cts.Token);
         if (snapshot.IsFailure)
         {
-            await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, (object)Array.Empty<MapMarkerSensor>());
+            await JS.InvokeVoidAsync(
+                "pollmasterMap.updateStationSensors", stationId, (object)Array.Empty<MapMarkerSensor>());
             return;
         }
         var payload = snapshot.Value.Sensors
@@ -80,11 +81,11 @@
         _cts.Dispose();
     }
 
-    private async Task LoadStationsAsync(CancellationToken cancellationToken)
+    private async Task LoadOverviewAsync(CancellationToken cancellationToken)
     {
-        _status = "Loading stations...";
+        _status = "Loading overview (first load may take ~60s)...";
         StateHasChanged();
-        var result = await ApiClient.GetStationsAsync(cancellationToken);
+        var result = await ApiClient.GetOverviewAsync(cancellationToken);
         if (result.IsFailure)
         {
             _status = $"Backend error: {result.Error}";
@@ -93,13 +94,25 @@
         }
 
         var markers = result.Value.Select(ToMarker).ToArray();
-        // Cast to object so the params object?[] resolves to a single argument
-        // (the array) instead of unpacking the markers into individual JS args.
         await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
         _status = $"{markers.Length} stations loaded";
         StateHasChanged();
     }
 
-    private static MapMarker ToMarker(StationDto station) =>
-        new(station.Id, station.Name, station.City, station.Latitude, station.Longitude, (int)AirQualityIndexLevel.Unknown);
+    private static MapMarker ToMarker(StationOverviewDto overview)
+    {
+        var pollutants = overview.Pollutants
+            .Select(p => new MapMarkerPollutant(p.Code, p.Value, p.Ratio))
+            .ToArray();
+
+        return new MapMarker(
+            Id: overview.Id,
+            Name: overview.Name,
+            City: overview.City,
+            Latitude: overview.Latitude,
+            Longitude: overview.Longitude,
+            Severity: (int)overview.Severity,
+            CriticalCode: overview.CriticalCode,
+            Pollutants: pollutants);
+    }
 }

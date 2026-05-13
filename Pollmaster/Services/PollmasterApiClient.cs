@@ -29,9 +29,10 @@ public sealed class PollmasterApiClient : IPollmasterApiClient
     }
 
     /// <inheritdoc />
-    public Task<Result<IReadOnlyList<StationDto>>> GetStationsAsync(CancellationToken cancellationToken)
+    public Task<Result<IReadOnlyList<StationOverviewDto>>> GetOverviewAsync(CancellationToken cancellationToken)
     {
-        return GetAsync<IReadOnlyList<StationDto>>("api/stations", cancellationToken, fallback: Array.Empty<StationDto>());
+        return GetAsync<IReadOnlyList<StationOverviewDto>>(
+            "api/overview", cancellationToken, fallback: Array.Empty<StationOverviewDto>());
     }
 
     /// <inheritdoc />
