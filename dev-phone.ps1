@@ -133,12 +133,16 @@ function Update-AndroidConfig {
     # Targeted regex substitution preserves the original indentation, the inline _comment
     # block and avoids the ConvertTo-Json round-trip that reformats and escapes the file.
     $content = Get-Content -LiteralPath $AndroidConfig -Raw
-    $newBaseAddress = "http://$IpAddress`:5100/"
     $pattern = '"BaseAddress"\s*:\s*"[^"]*"'
+    if (-not [regex]::IsMatch($content, $pattern)) {
+        throw "Did not find a BaseAddress entry to update in $AndroidConfig."
+    }
+    $newBaseAddress = "http://$IpAddress`:5100/"
     $replacement = '"BaseAddress": "' + $newBaseAddress + '"'
     $updated = [regex]::Replace($content, $pattern, $replacement)
     if ($updated -eq $content) {
-        throw "Did not find a BaseAddress entry to update in $AndroidConfig."
+        Write-Host '   BaseAddress already set, no rewrite needed.' -ForegroundColor DarkGray
+        return
     }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($AndroidConfig, $updated, $utf8NoBom)
