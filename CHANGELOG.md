@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file. The format foll
 ## [Unreleased]
 
 ### Added
+- Physical-Android-phone deployment workflow:
+  - New `lan` launch profile on `Pollmaster.Api` binding to `http://0.0.0.0:5100`.
+  - Bundled `Resources/Raw/appsettings.json` (and Android override) loaded at MAUI
+    startup, so the API base address can be tweaked without touching `MauiProgram.cs`.
+  - Android `network_security_config.xml` allowing cleartext traffic for the LAN
+    (dev-only) and wired into `AndroidManifest.xml`.
+  - README section explaining the end-to-end USB-debug flow.
+
 - Initial Pollmaster solution scaffolded:
   - `Pollmaster.Shared` — clean English API contracts (`StationDto`, `SensorDto`,
     `AirQualityIndexDto`, `SensorReadingsDto`, `StationSnapshotDto`) and the `Result<T>`

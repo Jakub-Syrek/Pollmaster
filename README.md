@@ -22,6 +22,52 @@ dotnet run --project Pollmaster --framework net10.0-windows10.0.19041.0
 The backend listens on `https://localhost:7100/` by default; the MAUI client targets that base
 address on Windows and `http://10.0.2.2:5100/` on the Android emulator.
 
+## Running on a Physical Android Phone
+
+The default MAUI configuration targets the Android emulator (`10.0.2.2:5100`). To deploy to a real
+phone you need three things: the backend reachable over the LAN, the client pointed at the PC's
+LAN IP, and Android's cleartext-traffic policy in place (already shipped under
+`Pollmaster/Platforms/Android/Resources/xml/network_security_config.xml`).
+
+### 1. Start the backend on the LAN
+
+```powershell
+# Bind to every interface so the phone can reach it.
+dotnet run --project Pollmaster.Api --launch-profile lan
+```
+
+The `lan` profile listens on `http://0.0.0.0:5100`. Find the PC's IPv4 on the same Wi-Fi with
+`ipconfig` and verify connectivity from the phone — open `http://<PC-IP>:5100/healthz` in the
+phone's browser, you should see `{"status":"ok"}`.
+
+### 2. Point the client at the PC's IP
+
+Edit `Pollmaster/Resources/Raw/appsettings.Android.json` and change `BaseAddress`:
+
+```json
+{
+  "PollmasterApi": {
+    "BaseAddress": "http://192.168.1.42:5100/",
+    "TimeoutSeconds": 30
+  }
+}
+```
+
+`10.0.2.2` stays as the default value because that is the Android emulator alias for the PC's
+loopback. A physical phone needs the actual LAN IP.
+
+### 3. Deploy via USB
+
+Enable Developer Options + USB debugging on the phone, plug it in, accept the RSA prompt and:
+
+```powershell
+adb devices                                                          # confirm the phone shows up
+dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android  # build + install + launch
+```
+
+The cleartext-traffic policy currently allows HTTP globally (dev-only). Before any production
+build replace `network_security_config.xml` with a strict one that requires HTTPS.
+
 ## Features
 
 - All Polish GIOŚ stations on a single Leaflet map
