@@ -8,7 +8,7 @@
     <RootNamespace>Pollmaster.Api</RootNamespace>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <UserSecretsId>pollmaster-api-bf18d4</UserSecretsId>
   </PropertyGroup>
 
