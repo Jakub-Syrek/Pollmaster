@@ -83,7 +83,27 @@ public sealed class StationSnapshotService : IStationSnapshotService
 
         var sensors = sensorsResult.Value;
         var tasks = sensors.Select(sensor => BuildReadingAsync(sensor, cancellationToken));
-        return await Task.WhenAll(tasks).ConfigureAwait(false);
+        var raw = await Task.WhenAll(tasks).ConfigureAwait(false);
+        return DeduplicateByPollutant(raw);
+    }
+
+    /// <summary>
+    /// Some stations expose two sensors for the same pollutant (e.g. automatic hourly PM10
+    /// plus a manual daily lab PM10). The map UI only needs one entry per pollutant, so we
+    /// keep the freshest non-null reading per code and drop the rest.
+    /// </summary>
+    private static IReadOnlyList<StationSensorReadingDto> DeduplicateByPollutant(
+        StationSensorReadingDto[] readings)
+    {
+        return readings
+            .GroupBy(r => r.Code, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group
+                .OrderByDescending(r => r.Value.HasValue)
+                .ThenByDescending(r => r.Timestamp ?? DateTime.MinValue)
+                .First())
+            .OrderByDescending(r => r.Value.HasValue)
+            .ThenBy(r => r.Code, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private async Task<StationSensorReadingDto> BuildReadingAsync(SensorDto sensor, CancellationToken cancellationToken)
