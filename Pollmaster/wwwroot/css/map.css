@@ -1,0 +1,112 @@
+html, body, #app {
+    height: 100%;
+    margin: 0;
+}
+
+.map-page {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.map-page__header {
+    padding: 0.5rem 1rem;
+    background: #2e7d32;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+}
+
+.map-page__header h2 {
+    font-size: 1.1rem;
+    margin: 0;
+}
+
+.map-page__status {
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.map-page__container {
+    flex: 1 1 auto;
+    position: relative;
+}
+
+#pollmaster-map {
+    position: absolute;
+    inset: 0;
+}
+
+.aq-marker {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+}
+
+.aq-popup__title {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.aq-popup__city {
+    color: #555;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.aq-popup__index {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    color: #fff;
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.aq-popup__sensors {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.aq-popup__sensors li {
+    padding: 0.15rem 0;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.85rem;
+}
+
+.aq-popup__sensors li:last-child {
+    border-bottom: none;
+}
+
+.aq-popup__sensor-name {
+    color: #333;
+}
+
+.aq-popup__sensor-value {
+    color: #2e7d32;
+    font-weight: 600;
+}
+
+.aq-popup__loading {
+    font-style: italic;
+    color: #777;
+    font-size: 0.85rem;
+}
+
+.aq-color-0 { background: #57b108; }
+.aq-color-1 { background: #b0dd10; }
+.aq-color-2 { background: #ffd911; }
+.aq-color-3 { background: #e58100; }
+.aq-color-4 { background: #b21f00; }
+.aq-color-5 { background: #990000; }
+.aq-color--unknown { background: #888; }

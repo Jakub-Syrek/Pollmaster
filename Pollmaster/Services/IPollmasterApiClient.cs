@@ -1,0 +1,21 @@
+using Pollmaster.Shared.Common;
+using Pollmaster.Shared.Contracts;
+
+namespace Pollmaster.Services;
+
+/// <summary>
+/// Client abstraction over the Pollmaster backend. Hides HTTP and JSON details from the UI layer.
+/// </summary>
+public interface IPollmasterApiClient
+{
+    /// <summary>Fetch all stations.</summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Station list.</returns>
+    Task<Result<IReadOnlyList<StationDto>>> GetStationsAsync(CancellationToken cancellationToken);
+
+    /// <summary>Fetch a composite per-station snapshot used by the map popup.</summary>
+    /// <param name="stationId">GIOŚ station id.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Snapshot DTO.</returns>
+    Task<Result<StationSnapshotDto>> GetStationSnapshotAsync(int stationId, CancellationToken cancellationToken);
+}

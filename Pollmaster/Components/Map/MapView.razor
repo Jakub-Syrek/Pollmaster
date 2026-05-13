@@ -1,0 +1,103 @@
+@using System.Threading
+@using Microsoft.AspNetCore.Components
+@using Microsoft.JSInterop
+@using Pollmaster.Services
+@using Pollmaster.Shared.Common
+@using Pollmaster.Shared.Contracts
+@implements IAsyncDisposable
+@inject IPollmasterApiClient ApiClient
+@inject IJSRuntime JS
+
+<div class="map-page">
+    <header class="map-page__header">
+        <h2>Pollmaster — Polish air-quality map</h2>
+        <span class="map-page__status">@_status</span>
+    </header>
+    <div class="map-page__container">
+        <div id="pollmaster-map" @ref="_mapElement"></div>
+    </div>
+</div>
+
+@code {
+    private ElementReference _mapElement;
+    private DotNetObjectReference<MapView>? _dotnetRef;
+    private string _status = "Initializing...";
+    private bool _initialized;
+    private readonly CancellationTokenSource _cts = new();
+
+    /// <inheritdoc />
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _initialized)
+        {
+            return;
+        }
+
+        _initialized = true;
+        try
+        {
+            _dotnetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("pollmasterMap.initMap", "pollmaster-map", _dotnetRef);
+            await LoadStationsAsync(_cts.Token);
+        }
+        catch (Exception ex)
+        {
+            _status = $"Map init failed: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>JS callback invoked when a station marker popup opens. Lazily loads the snapshot.</summary>
+    /// <param name="stationId">Station identifier from the marker.</param>
+    [JSInvokable]
+    public async Task OnStationPopupOpenedAsync(int stationId)
+    {
+        var snapshot = await ApiClient.GetStationSnapshotAsync(stationId, _cts.Token);
+        if (snapshot.IsFailure)
+        {
+            await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, Array.Empty<MapMarkerSensor>());
+            return;
+        }
+        var payload = snapshot.Value.Sensors
+            .Select(s => new MapMarkerSensor(s.Code, s.Value, s.Unit))
+            .ToArray();
+        await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, payload);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        try
+        {
+            await JS.InvokeVoidAsync("pollmasterMap.dispose");
+        }
+        catch
+        {
+            // WebView may already be torn down.
+        }
+        _dotnetRef?.Dispose();
+        _cts.Dispose();
+    }
+
+    private async Task LoadStationsAsync(CancellationToken cancellationToken)
+    {
+        _status = "Loading stations...";
+        StateHasChanged();
+        var result = await ApiClient.GetStationsAsync(cancellationToken);
+        if (result.IsFailure)
+        {
+            _status = $"Backend error: {result.Error}";
+            StateHasChanged();
+            return;
+        }
+
+        var markers = result.Value.Select(ToMarker).ToArray();
+        await JS.InvokeVoidAsync("pollmasterMap.addStations", markers);
+        _status = $"{markers.Length} stations loaded";
+        StateHasChanged();
+    }
+
+    private static MapMarker ToMarker(StationDto station) =>
+        new(station.Id, station.Name, station.City, station.Latitude, station.Longitude, (int)AirQualityIndexLevel.Unknown);
+}
