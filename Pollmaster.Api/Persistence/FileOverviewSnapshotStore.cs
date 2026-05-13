@@ -3,7 +3,6 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Pollmaster.Api.Configuration;
 using Pollmaster.Shared.Contracts;
-// Hot-path JSON via System.Text.Json source generation — avoids reflection on every save / load.
 
 namespace Pollmaster.Api.Persistence;
 
@@ -19,7 +18,16 @@ public sealed class FileOverviewSnapshotStore : IOverviewSnapshotStore
     private const string FileSuffix = ".json";
     private const string TimestampFormat = "yyyyMMddTHHmmssfffZ";
 
-    private static readonly OverviewJsonContext JsonContext = OverviewJsonContext.Default;
+    // Reflection-based serializer kept on the hot path — System.Text.Json source-gen
+    // metadata does not synthesise concrete deserializers for IReadOnlyList<T> property
+    // shapes used by OverviewSnapshot.Stations and StationOverviewDto.Pollutants, which
+    // silently broke LoadLatestAsync. Reflection costs are negligible against the 30-min
+    // warmup cadence.
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = false
+    };
 
     private readonly OverviewPersistenceOptions _options;
     private readonly string _resolvedDirectory;
@@ -63,7 +71,7 @@ public sealed class FileOverviewSnapshotStore : IOverviewSnapshotStore
             {
                 await using var stream = newest.OpenRead();
                 return await JsonSerializer
-                    .DeserializeAsync(stream, JsonContext.OverviewSnapshot, cancellationToken)
+                    .DeserializeAsync<OverviewSnapshot>(stream, JsonOptions, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or JsonException)
@@ -94,7 +102,7 @@ public sealed class FileOverviewSnapshotStore : IOverviewSnapshotStore
             await using (var stream = File.Create(path))
             {
                 await JsonSerializer
-                    .SerializeAsync(stream, snapshot, JsonContext.OverviewSnapshot, cancellationToken)
+                    .SerializeAsync(stream, snapshot, JsonOptions, cancellationToken)
                     .ConfigureAwait(false);
             }
             Prune();

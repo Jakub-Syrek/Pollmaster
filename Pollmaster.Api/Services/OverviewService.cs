@@ -82,8 +82,10 @@ public sealed class OverviewService : IOverviewService
             var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
             if (persisted is not null)
             {
-                CacheSnapshot(persisted);
-                return Result<IReadOnlyList<StationOverviewDto>>.Success(persisted);
+                // Serve any disk snapshot immediately, even when stale — the background
+                // warmup will refresh it on the next tick.
+                CacheSnapshot(persisted.Value.Stations);
+                return Result<IReadOnlyList<StationOverviewDto>>.Success(persisted.Value.Stations);
             }
         }
 
@@ -112,12 +114,12 @@ public sealed class OverviewService : IOverviewService
             return false;
         }
         var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
-        if (persisted is not null)
+        if (persisted is not null && persisted.Value.IsFresh)
         {
-            CacheSnapshot(persisted);
+            CacheSnapshot(persisted.Value.Stations);
             _logger.LogInformation(
                 "Disk snapshot still fresh ({Count} stations), skipping warmup rebuild.",
-                persisted.Count);
+                persisted.Value.Stations.Count);
             return false;
         }
 
@@ -172,7 +174,13 @@ public sealed class OverviewService : IOverviewService
         return Result<IReadOnlyList<StationOverviewDto>>.Success(overviews);
     }
 
-    private async Task<IReadOnlyList<StationOverviewDto>?> TryLoadPersistedAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Loads the most recent disk snapshot and reports whether it is still inside the
+    /// freshness window. The user-facing path always serves the data when it exists
+    /// (stale-while-revalidate); the background warmup uses the <c>IsFresh</c> flag to
+    /// decide whether to rebuild.
+    /// </summary>
+    private async Task<PersistedSnapshot?> TryLoadPersistedAsync(CancellationToken cancellationToken)
     {
         OverviewSnapshot? snapshot;
         try
@@ -189,18 +197,23 @@ public sealed class OverviewService : IOverviewService
             return null;
         }
         var age = DateTime.UtcNow - snapshot.GeneratedAt;
-        if (age.TotalMinutes > _persistenceOptions.FreshnessMinutes)
+        var isFresh = age.TotalMinutes <= _persistenceOptions.FreshnessMinutes;
+        if (isFresh)
         {
             _logger.LogInformation(
-                "Disk snapshot is {AgeMinutes:F1} min old (max {Max} min), rebuilding from GIOŚ.",
-                age.TotalMinutes, _persistenceOptions.FreshnessMinutes);
-            return null;
+                "Serving overview from disk snapshot generated {AgeMinutes:F1} min ago ({Count} stations)",
+                age.TotalMinutes, snapshot.Stations.Count);
         }
-        _logger.LogInformation(
-            "Serving overview from disk snapshot generated {AgeMinutes:F1} min ago ({Count} stations)",
-            age.TotalMinutes, snapshot.Stations.Count);
-        return snapshot.Stations;
+        else
+        {
+            _logger.LogInformation(
+                "Serving stale disk snapshot ({AgeMinutes:F1} min old, max {Max} min) — warmup will refresh it.",
+                age.TotalMinutes, _persistenceOptions.FreshnessMinutes);
+        }
+        return new PersistedSnapshot(snapshot.Stations, isFresh);
     }
+
+    private readonly record struct PersistedSnapshot(IReadOnlyList<StationOverviewDto> Stations, bool IsFresh);
 
     private async Task PersistAsync(IReadOnlyList<StationOverviewDto> overviews, CancellationToken cancellationToken)
     {
