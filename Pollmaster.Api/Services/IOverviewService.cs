@@ -18,4 +18,12 @@ public interface IOverviewService
     Task<Result<IReadOnlyList<StationOverviewDto>>> GetOverviewAsync(
         CancellationToken cancellationToken,
         bool forceRefresh = false);
+
+    /// <summary>
+    /// Background-friendly warmup. Inspects the persisted snapshot and only triggers a
+    /// rebuild when it is stale (older than the configured freshness window) or missing.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True when a rebuild ran, false when the existing disk snapshot was still fresh.</returns>
+    Task<bool> RefreshIfStaleAsync(CancellationToken cancellationToken);
 }

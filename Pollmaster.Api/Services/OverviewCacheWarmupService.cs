@@ -68,21 +68,21 @@ public sealed class OverviewCacheWarmupService : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var service = scope.ServiceProvider.GetRequiredService<IOverviewService>();
-            var result = await service
-                .GetOverviewAsync(cancellationToken, forceRefresh: true)
+            var rebuilt = await service
+                .RefreshIfStaleAsync(cancellationToken)
                 .ConfigureAwait(false);
             stopwatch.Stop();
-            if (result.IsSuccess)
+            if (rebuilt)
             {
                 _logger.LogInformation(
-                    "Overview cache warmed in {Elapsed:F1}s ({Count} stations)",
-                    stopwatch.Elapsed.TotalSeconds, result.Value.Count);
+                    "Warmup rebuilt the overview cache in {Elapsed:F1}s",
+                    stopwatch.Elapsed.TotalSeconds);
             }
             else
             {
-                _logger.LogWarning(
-                    "Overview warmup returned failure after {Elapsed:F1}s: {Error}",
-                    stopwatch.Elapsed.TotalSeconds, result.Error);
+                _logger.LogInformation(
+                    "Warmup skipped rebuild — existing snapshot still fresh ({Elapsed:F1}s).",
+                    stopwatch.Elapsed.TotalSeconds);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

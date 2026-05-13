@@ -19,6 +19,13 @@ public sealed class OverviewService : IOverviewService
     private const double MinPopulationRatioForFullTtl = 0.5;
     private const int DegradedTtlSeconds = 30;
 
+    /// <summary>
+    /// Single-flight gate that ensures only one expensive GIOŚ fan-out is in flight at a
+    /// time. Concurrent callers wait on this semaphore, see the freshly-populated cache
+    /// when their turn arrives, and return without firing a duplicate rebuild.
+    /// </summary>
+    private static readonly SemaphoreSlim RebuildGate = new(1, 1);
+
     private readonly IStationService _stations;
     private readonly IStationSnapshotService _snapshots;
     private readonly IWhoLimitProvider _limits;
@@ -68,14 +75,13 @@ public sealed class OverviewService : IOverviewService
         CancellationToken cancellationToken,
         bool forceRefresh = false)
     {
+        if (!forceRefresh && TryGetCached(out var cached))
+        {
+            return Result<IReadOnlyList<StationOverviewDto>>.Success(cached!);
+        }
+
         if (!forceRefresh)
         {
-            if (_cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? cached) &&
-                cached is not null)
-            {
-                return Result<IReadOnlyList<StationOverviewDto>>.Success(cached);
-            }
-
             var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
             if (persisted is not null)
             {
@@ -84,6 +90,70 @@ public sealed class OverviewService : IOverviewService
             }
         }
 
+        await RebuildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Another caller may have rebuilt while we were waiting. Skip the GIOŚ fan-out
+            // unless the caller explicitly asked for a forced refresh.
+            if (!forceRefresh && TryGetCached(out var afterWait))
+            {
+                return Result<IReadOnlyList<StationOverviewDto>>.Success(afterWait!);
+            }
+            return await RebuildAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            RebuildGate.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> RefreshIfStaleAsync(CancellationToken cancellationToken)
+    {
+        if (TryGetCached(out _))
+        {
+            return false;
+        }
+        var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
+        if (persisted is not null)
+        {
+            _cache.Set(CacheKey, persisted, TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds));
+            _logger.LogInformation(
+                "Disk snapshot still fresh ({Count} stations), skipping warmup rebuild.",
+                persisted.Count);
+            return false;
+        }
+
+        await RebuildGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (TryGetCached(out _))
+            {
+                return false;
+            }
+            await RebuildAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            RebuildGate.Release();
+        }
+    }
+
+    private bool TryGetCached(out IReadOnlyList<StationOverviewDto>? cached)
+    {
+        if (_cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? value) &&
+            value is not null)
+        {
+            cached = value;
+            return true;
+        }
+        cached = null;
+        return false;
+    }
+
+    private async Task<Result<IReadOnlyList<StationOverviewDto>>> RebuildAsync(CancellationToken cancellationToken)
+    {
         var stations = await _stations.GetStationsAsync(cancellationToken).ConfigureAwait(false);
         if (stations.IsFailure)
         {
