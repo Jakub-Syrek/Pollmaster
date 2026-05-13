@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Polly;
 using Pollmaster.Configuration;
 using Pollmaster.Services;
 
@@ -83,7 +84,18 @@ public static class MauiProgram
             var options = sp.GetRequiredService<IOptions<ApiClientOptions>>().Value;
             http.BaseAddress = new Uri(options.BaseAddress);
             http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
-        }).AddStandardResilienceHandler();
+        }).AddStandardResilienceHandler(opts =>
+        {
+            // The default TotalRequestTimeout is 30 s, which cancels /api/overview the moment
+            // the backend starts warming a cold snapshot cache (~60–90 s). Align all of the
+            // resilience timeouts with HttpClient.Timeout so the user-facing config wins.
+            opts.AttemptTimeout.Timeout = TimeSpan.FromSeconds(60);
+            opts.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(120);
+            opts.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(120);
+            opts.Retry.MaxRetryAttempts = 2;
+            opts.Retry.BackoffType = DelayBackoffType.Exponential;
+            opts.Retry.UseJitter = true;
+        });
 
         services.AddSingleton<IMediaCaptureService, MediaCaptureService>();
     }
