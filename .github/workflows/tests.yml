@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Build & test (.NET 10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore (backend + shared + tests)
+        run: |
+          dotnet restore Pollmaster.Shared/Pollmaster.Shared.csproj
+          dotnet restore Pollmaster.Api/Pollmaster.Api.csproj
+          dotnet restore Pollmaster.Api.Tests/Pollmaster.Api.Tests.csproj
+
+      - name: Build (Release)
+        run: dotnet build Pollmaster.Api.Tests/Pollmaster.Api.Tests.csproj --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test Pollmaster.Api.Tests/Pollmaster.Api.Tests.csproj --configuration Release --no-build --verbosity normal
+
+  code-quality:
+    name: Code-quality checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify single author on new commits
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.sha }}"
+          if [ -z "$base" ]; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          bad=$(git log --format='%an <%ae>' "$base..$head" | sort -u | grep -v -E '^Jakub Syrek <jakubvonsyrek@gmail\.com>$' || true)
+          if [ -n "$bad" ]; then
+            echo "Unexpected commit authors:"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Reject AI co-author footer
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.sha }}"
+          if [ -z "$base" ]; then
+            base="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          if git log --format='%B' "$base..$head" | grep -iE 'co-authored-by:.*claude|generated with .*claude'; then
+            echo "AI co-author / generated-with line detected — remove it."
+            exit 1
+          fi

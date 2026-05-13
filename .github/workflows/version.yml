@@ -1,0 +1,82 @@
+name: version
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "CHANGELOG.md"
+      - "**/*.md"
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Auto-bump version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Determine bump
+        id: bump
+        run: |
+          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          range=${last_tag:+$last_tag..HEAD}
+          range=${range:-HEAD}
+          commits=$(git log --format='%s%n%b' $range)
+          bump="patch"
+          if echo "$commits" | grep -qE '^feat(\(|:)'; then
+            bump="minor"
+          fi
+          if echo "$commits" | grep -qE 'BREAKING CHANGE'; then
+            bump="major"
+          fi
+          echo "bump=$bump" >> $GITHUB_OUTPUT
+          echo "last_tag=$last_tag" >> $GITHUB_OUTPUT
+
+      - name: Compute next version
+        id: next
+        run: |
+          current=$(grep -oPm1 '(?<=<Version>)[^<]+' Pollmaster.Api/Pollmaster.Api.csproj)
+          IFS=. read -r major minor patch <<< "$current"
+          case "${{ steps.bump.outputs.bump }}" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          echo "version=${major}.${minor}.${patch}" >> $GITHUB_OUTPUT
+
+      - name: Update version in csproj files
+        run: |
+          ver="${{ steps.next.outputs.version }}"
+          for f in Pollmaster.Api/Pollmaster.Api.csproj \
+                   Pollmaster.Shared/Pollmaster.Shared.csproj \
+                   Pollmaster/Pollmaster.csproj; do
+            sed -i -E "s|<Version>[^<]+</Version>|<Version>${ver}</Version>|" "$f" || true
+            sed -i -E "s|<ApplicationDisplayVersion>[^<]+</ApplicationDisplayVersion>|<ApplicationDisplayVersion>${ver}</ApplicationDisplayVersion>|" "$f" || true
+          done
+
+      - name: Commit, tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ver="${{ steps.next.outputs.version }}"
+          git config user.name "Jakub Syrek"
+          git config user.email "jakubvonsyrek@gmail.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to version files; skipping commit."
+            exit 0
+          fi
+          git commit -m "chore(release): v${ver}"
+          git tag "v${ver}"
+          git push origin HEAD:main --tags
+          gh release create "v${ver}" --generate-notes
