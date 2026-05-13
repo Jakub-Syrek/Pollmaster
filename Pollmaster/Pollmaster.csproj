@@ -24,8 +24,8 @@
         <ApplicationId>com.jakubsyrek.pollmaster</ApplicationId>
 
         <!-- Versions -->
-        <Version>1.9.1</Version>
-        <ApplicationDisplayVersion>1.9.1</ApplicationDisplayVersion>
+        <Version>1.9.2</Version>
+        <ApplicationDisplayVersion>1.9.2</ApplicationDisplayVersion>
         <ApplicationVersion>1</ApplicationVersion>
 
         <WindowsPackageType>None</WindowsPackageType>
