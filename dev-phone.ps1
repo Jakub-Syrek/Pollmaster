@@ -243,22 +243,69 @@ function Invoke-AdbConnect {
     }
 }
 
-function Assert-DeviceConnected {
+function Get-OnlineDeviceLines {
     param([Parameter(Mandatory)][string]$AdbPath)
-    Write-Section 'Looking for an authorised Android device'
-
-    # Pre-warm the adb daemon so the chatty first-run startup messages do not arrive
-    # interleaved with the "adb devices" output we actually want to parse.
-    Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('start-server') | Out-Null
-
     $output = Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('devices')
     $lines = @($output | ForEach-Object { $_.ToString() })
-    Write-Host ($lines -join [Environment]::NewLine) -ForegroundColor DarkGray
-    $deviceLines = $lines | Select-Object -Skip 1 |
-        Where-Object { $_ -match '\t(device)$' }
-    if (-not $deviceLines) {
-        throw 'No authorised device. Either plug the phone in via USB or pass -PairWith / -Connect to use Wireless debugging.'
+    return @($lines | Select-Object -Skip 1 | Where-Object { $_ -match '\t(device)$' })
+}
+
+function Find-WirelessAdbTarget {
+    <#
+    .DESCRIPTION
+    Probes adb's mDNS browser for paired Wireless-debugging devices and returns the first
+    "<ip>:<port>" found under the _adb-tls-connect._tcp service type. Returns $null when
+    mDNS discovery is disabled, blocked by the network, or no paired phone is broadcasting.
+    #>
+    param([Parameter(Mandatory)][string]$AdbPath)
+    $output = Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('mdns', 'services')
+    $lines = @($output | ForEach-Object { $_.ToString() })
+    foreach ($line in $lines) {
+        if ($line -match '_adb-tls-connect\._tcp\s+(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})') {
+            return "$($matches[1]):$($matches[2])"
+        }
     }
+    return $null
+}
+
+function Assert-DeviceConnected {
+    <#
+    .DESCRIPTION
+    Ensures adb sees at least one authorised device. When the caller did not pass an
+    explicit -PairWith / -Connect target and the device list is empty we fall back to
+    mDNS discovery so a previously paired phone reconnects on its own.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$AdbPath,
+        [bool]$AllowAutoConnect = $true
+    )
+    Write-Section 'Looking for an authorised Android device'
+
+    # Pre-warm the adb daemon so its first-run startup messages do not interleave with
+    # the "adb devices" output we actually want to parse.
+    Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('start-server') | Out-Null
+
+    $deviceLines = Get-OnlineDeviceLines -AdbPath $AdbPath
+    if ($deviceLines) {
+        Write-Host ($deviceLines -join [Environment]::NewLine) -ForegroundColor DarkGray
+        return
+    }
+
+    if ($AllowAutoConnect) {
+        Write-Host '   no device online, scanning mDNS for a paired phone...' -ForegroundColor DarkGray
+        $discovered = Find-WirelessAdbTarget -AdbPath $AdbPath
+        if ($discovered) {
+            Write-Host "   discovered $discovered via mDNS, connecting..." -ForegroundColor DarkGray
+            Invoke-AdbConnect -AdbPath $AdbPath -Target $discovered
+            $deviceLines = Get-OnlineDeviceLines -AdbPath $AdbPath
+            if ($deviceLines) {
+                Write-Host ($deviceLines -join [Environment]::NewLine) -ForegroundColor DarkGray
+                return
+            }
+        }
+    }
+
+    throw 'No authorised device. Plug the phone in via USB, or enable Wireless debugging and pass -PairWith / -Connect.'
 }
 
 function Invoke-DotnetBuild {
@@ -322,7 +369,10 @@ if ($Connect) {
     Invoke-AdbConnect -AdbPath $adb -Target $Connect
 }
 
-Assert-DeviceConnected -AdbPath $adb
+# Auto-discover only when the caller did not already point us at a specific target —
+# otherwise an explicit -Connect that just failed would be silently shadowed by mDNS.
+$allowAutoConnect = -not $Connect -and -not $PairWith
+Assert-DeviceConnected -AdbPath $adb -AllowAutoConnect $allowAutoConnect
 
 Invoke-DotnetBuild -Project $ApiProjectPath
 Invoke-DotnetBuild -Project $MauiProjectPath -Framework $AndroidTfm

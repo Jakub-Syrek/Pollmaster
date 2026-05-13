@@ -36,6 +36,11 @@ WinUI client as a native window.
 .\dev-phone.ps1 -SkipConfig                      # leave appsettings.Android.json alone
 ```
 
+After the very first pair the script auto-discovers a previously paired phone over
+mDNS (`adb mdns services`) and reconnects on its own, so day-to-day you usually just
+run `.\dev-phone.ps1` with no flags — the script will pick up the phone as soon as
+Wireless debugging is on.
+
 What the script does on every run:
 
 1. Kills lingering `Pollmaster*`, `MSBuild`, `dotnet` and `cmd` processes that hold file locks.
