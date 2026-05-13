@@ -1,6 +1,7 @@
 using Pollmaster.Api.Configuration;
 using Pollmaster.Api.Endpoints;
 using Pollmaster.Api.Gios;
+using Pollmaster.Api.Gios.Limits;
 using Pollmaster.Api.Gios.Mapping;
 using Pollmaster.Api.Services;
 
@@ -26,12 +27,15 @@ builder.Services.AddSingleton<IStationMapper, StationMapper>();
 builder.Services.AddSingleton<ISensorMapper, SensorMapper>();
 builder.Services.AddSingleton<IMeasurementMapper, MeasurementMapper>();
 builder.Services.AddSingleton<IAirQualityIndexMapper, AirQualityIndexMapper>();
+builder.Services.AddSingleton<IWhoLimitProvider, WhoLimitProvider>();
+builder.Services.AddSingleton<ISeverityCalculator, WhoSeverityCalculator>();
 
 builder.Services.AddScoped<IStationService, StationService>();
 builder.Services.AddScoped<ISensorService, SensorService>();
 builder.Services.AddScoped<IMeasurementService, MeasurementService>();
 builder.Services.AddScoped<IAirQualityIndexService, AirQualityIndexService>();
 builder.Services.AddScoped<IStationSnapshotService, StationSnapshotService>();
+builder.Services.AddScoped<IOverviewService, OverviewService>();
 
 builder.Services
     .AddHttpClient<IGiosApiClient, GiosApiClient>((sp, http) =>
@@ -78,6 +82,7 @@ app.UseCors(CorsPolicy);
 app.MapHealthEndpoints();
 app.MapStationEndpoints();
 app.MapSensorEndpoints();
+app.MapOverviewEndpoints();
 
 app.Run();
 
