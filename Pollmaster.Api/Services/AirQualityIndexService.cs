@@ -39,7 +39,7 @@ public sealed class AirQualityIndexService : IAirQualityIndexService
     /// <inheritdoc />
     public async Task<Result<AirQualityIndexDto>> GetIndexAsync(int stationId, CancellationToken cancellationToken)
     {
-        var key = CacheKey(stationId);
+        var key = CacheKeys.IndexForStation(stationId);
         if (_cache.TryGetValue(key, out AirQualityIndexDto? cached) && cached is not null)
         {
             return Result<AirQualityIndexDto>.Success(cached);
@@ -51,5 +51,4 @@ public sealed class AirQualityIndexService : IAirQualityIndexService
         return Result<AirQualityIndexDto>.Success(dto);
     }
 
-    private static string CacheKey(int stationId) => $"pollmaster:index:{stationId}";
 }

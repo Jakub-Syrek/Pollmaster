@@ -1,7 +1,7 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Pollmaster.Api.Configuration;
-using Pollmaster.Api.Gios.Limits;
 using Pollmaster.Api.Persistence;
 using Pollmaster.Shared.Common;
 using Pollmaster.Shared.Contracts;
@@ -9,12 +9,13 @@ using Pollmaster.Shared.Contracts;
 namespace Pollmaster.Api.Services;
 
 /// <summary>
-/// Composes per-station overviews from cached snapshots. Concurrency is bounded so we do not
-/// burst GIOŚ on a cold cache; the result is itself cached for the configured snapshot TTL.
+/// Orchestrates the per-station overview pipeline: in-memory cache → disk snapshot → GIOŚ
+/// fan-out, behind a process-wide single-flight gate. The actual projection (severity,
+/// pollutant ratios, critical pollutant selection) is delegated to <see cref="IOverviewProjector"/>
+/// so this service only knows about caching and concurrency.
 /// </summary>
 public sealed class OverviewService : IOverviewService
 {
-    private const string CacheKey = "pollmaster:overview:all";
     private const int MaxParallelSnapshots = 3;
     private const double MinPopulationRatioForFullTtl = 0.5;
     private const int DegradedTtlSeconds = 30;
@@ -28,8 +29,7 @@ public sealed class OverviewService : IOverviewService
 
     private readonly IStationService _stations;
     private readonly IStationSnapshotService _snapshots;
-    private readonly IWhoLimitProvider _limits;
-    private readonly ISeverityCalculator _severity;
+    private readonly IOverviewProjector _projector;
     private readonly IMemoryCache _cache;
     private readonly IOverviewSnapshotStore _snapshotStore;
     private readonly GiosCacheOptions _cacheOptions;
@@ -39,8 +39,7 @@ public sealed class OverviewService : IOverviewService
     /// <summary>Construct the overview service.</summary>
     /// <param name="stations">Station directory.</param>
     /// <param name="snapshots">Station snapshot facade.</param>
-    /// <param name="limits">WHO limit provider.</param>
-    /// <param name="severity">Severity bucket calculator.</param>
+    /// <param name="projector">Snapshot-to-overview projector.</param>
     /// <param name="cache">In-memory cache.</param>
     /// <param name="snapshotStore">Disk-backed snapshot store.</param>
     /// <param name="options">GIOŚ options snapshot.</param>
@@ -49,8 +48,7 @@ public sealed class OverviewService : IOverviewService
     public OverviewService(
         IStationService stations,
         IStationSnapshotService snapshots,
-        IWhoLimitProvider limits,
-        ISeverityCalculator severity,
+        IOverviewProjector projector,
         IMemoryCache cache,
         IOverviewSnapshotStore snapshotStore,
         IOptions<GiosOptions> options,
@@ -61,8 +59,7 @@ public sealed class OverviewService : IOverviewService
         ArgumentNullException.ThrowIfNull(persistenceOptions);
         _stations = stations ?? throw new ArgumentNullException(nameof(stations));
         _snapshots = snapshots ?? throw new ArgumentNullException(nameof(snapshots));
-        _limits = limits ?? throw new ArgumentNullException(nameof(limits));
-        _severity = severity ?? throw new ArgumentNullException(nameof(severity));
+        _projector = projector ?? throw new ArgumentNullException(nameof(projector));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
         _cacheOptions = options.Value.Cache;
@@ -85,7 +82,7 @@ public sealed class OverviewService : IOverviewService
             var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
             if (persisted is not null)
             {
-                _cache.Set(CacheKey, persisted, TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds));
+                CacheSnapshot(persisted);
                 return Result<IReadOnlyList<StationOverviewDto>>.Success(persisted);
             }
         }
@@ -117,7 +114,7 @@ public sealed class OverviewService : IOverviewService
         var persisted = await TryLoadPersistedAsync(cancellationToken).ConfigureAwait(false);
         if (persisted is not null)
         {
-            _cache.Set(CacheKey, persisted, TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds));
+            CacheSnapshot(persisted);
             _logger.LogInformation(
                 "Disk snapshot still fresh ({Count} stations), skipping warmup rebuild.",
                 persisted.Count);
@@ -142,7 +139,7 @@ public sealed class OverviewService : IOverviewService
 
     private bool TryGetCached(out IReadOnlyList<StationOverviewDto>? cached)
     {
-        if (_cache.TryGetValue(CacheKey, out IReadOnlyList<StationOverviewDto>? value) &&
+        if (_cache.TryGetValue(CacheKeys.OverviewAll, out IReadOnlyList<StationOverviewDto>? value) &&
             value is not null)
         {
             cached = value;
@@ -151,6 +148,9 @@ public sealed class OverviewService : IOverviewService
         cached = null;
         return false;
     }
+
+    private void CacheSnapshot(IReadOnlyList<StationOverviewDto> overviews) =>
+        _cache.Set(CacheKeys.OverviewAll, overviews, TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds));
 
     private async Task<Result<IReadOnlyList<StationOverviewDto>>> RebuildAsync(CancellationToken cancellationToken)
     {
@@ -162,7 +162,7 @@ public sealed class OverviewService : IOverviewService
 
         var overviews = await BuildOverviewsAsync(stations.Value, cancellationToken).ConfigureAwait(false);
         var ttl = ResolveCacheTtl(overviews);
-        _cache.Set(CacheKey, overviews, ttl);
+        _cache.Set(CacheKeys.OverviewAll, overviews, ttl);
 
         await PersistAsync(overviews, cancellationToken).ConfigureAwait(false);
 
@@ -229,7 +229,14 @@ public sealed class OverviewService : IOverviewService
         {
             return TimeSpan.FromSeconds(DegradedTtlSeconds);
         }
-        var populated = overviews.Count(o => o.Pollutants.Count > 0);
+        var populated = 0;
+        foreach (var overview in overviews)
+        {
+            if (overview.Pollutants.Count > 0)
+            {
+                populated++;
+            }
+        }
         var ratio = (double)populated / overviews.Count;
         return ratio >= MinPopulationRatioForFullTtl
             ? TimeSpan.FromSeconds(_cacheOptions.SnapshotTtlSeconds)
@@ -240,24 +247,33 @@ public sealed class OverviewService : IOverviewService
         IReadOnlyList<StationDto> stations,
         CancellationToken cancellationToken)
     {
-        using var gate = new SemaphoreSlim(MaxParallelSnapshots);
-        var tasks = stations.Select(station => BuildSingleAsync(station, gate, cancellationToken));
-        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-        return results.ToList();
+        // ConcurrentBag + Parallel.ForEachAsync replaces the manual SemaphoreSlim + Task.WhenAll
+        // dance. Same bounded concurrency (3), lower allocation overhead, and no need to
+        // materialise a per-station Task list of ~290 entries.
+        var bag = new ConcurrentBag<StationOverviewDto>();
+        var options = new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = MaxParallelSnapshots
+        };
+        await Parallel.ForEachAsync(stations, options, async (station, ct) =>
+        {
+            var overview = await BuildSingleAsync(station, ct).ConfigureAwait(false);
+            bag.Add(overview);
+        }).ConfigureAwait(false);
+        return bag.ToArray();
     }
 
     private async Task<StationOverviewDto> BuildSingleAsync(
         StationDto station,
-        SemaphoreSlim gate,
         CancellationToken cancellationToken)
     {
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var snapshot = await _snapshots.GetSnapshotAsync(station.Id, cancellationToken).ConfigureAwait(false);
             return snapshot.IsSuccess
-                ? BuildFromSnapshot(snapshot.Value)
-                : BuildEmpty(station);
+                ? _projector.ProjectFromSnapshot(snapshot.Value)
+                : _projector.ProjectEmpty(station);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -268,60 +284,7 @@ public sealed class OverviewService : IOverviewService
             // Polly circuit-breaker, rate-limit exhaustion or downstream JSON glitches must not
             // tank the whole overview. Surface an empty entry for this station and move on.
             _logger.LogWarning(ex, "Overview build failed for station {StationId}", station.Id);
-            return BuildEmpty(station);
-        }
-        finally
-        {
-            gate.Release();
+            return _projector.ProjectEmpty(station);
         }
     }
-
-    private StationOverviewDto BuildFromSnapshot(StationSnapshotDto snapshot)
-    {
-        var pollutants = snapshot.Sensors
-            .Where(s => s.Value.HasValue)
-            .Select(s => BuildPollutant(s))
-            .ToList();
-
-        var critical = pollutants
-            .Where(p => p.Ratio.HasValue)
-            .OrderByDescending(p => p.Ratio!.Value)
-            .FirstOrDefault();
-
-        var officialLevel = snapshot.Index?.Overall.Level ?? AirQualityIndexLevel.Unknown;
-        var derivedLevel = _severity.FromRatio(critical?.Ratio);
-        var level = officialLevel != AirQualityIndexLevel.Unknown ? officialLevel : derivedLevel;
-
-        return new StationOverviewDto(
-            Id: snapshot.Station.Id,
-            Name: snapshot.Station.Name,
-            City: snapshot.Station.City,
-            Latitude: snapshot.Station.Latitude,
-            Longitude: snapshot.Station.Longitude,
-            Severity: level,
-            CriticalCode: critical?.Code,
-            CriticalRatio: critical?.Ratio,
-            Pollutants: pollutants);
-    }
-
-    private StationPollutantReadingDto BuildPollutant(StationSensorReadingDto reading)
-    {
-        var limit = _limits.GetLimit(reading.Code);
-        var ratio = limit.HasValue && limit.Value > 0 && reading.Value.HasValue
-            ? reading.Value.Value / limit.Value
-            : (double?)null;
-        return new StationPollutantReadingDto(reading.Code, reading.Value!.Value, ratio);
-    }
-
-    private static StationOverviewDto BuildEmpty(StationDto station) =>
-        new(
-            Id: station.Id,
-            Name: station.Name,
-            City: station.City,
-            Latitude: station.Latitude,
-            Longitude: station.Longitude,
-            Severity: AirQualityIndexLevel.Unknown,
-            CriticalCode: null,
-            CriticalRatio: null,
-            Pollutants: Array.Empty<StationPollutantReadingDto>());
 }

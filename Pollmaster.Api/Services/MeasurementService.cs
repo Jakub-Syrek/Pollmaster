@@ -39,7 +39,7 @@ public sealed class MeasurementService : IMeasurementService
     /// <inheritdoc />
     public async Task<Result<SensorReadingsDto>> GetReadingsAsync(int sensorId, CancellationToken cancellationToken)
     {
-        var key = CacheKey(sensorId);
+        var key = CacheKeys.ReadingsForSensor(sensorId);
         if (_cache.TryGetValue(key, out SensorReadingsDto? cached) && cached is not null)
         {
             return Result<SensorReadingsDto>.Success(cached);
@@ -56,5 +56,4 @@ public sealed class MeasurementService : IMeasurementService
     private static SensorReadingsDto EmptyReadings(int sensorId) =>
         new(sensorId, string.Empty, "μg/m³", Array.Empty<MeasurementDto>());
 
-    private static string CacheKey(int sensorId) => $"pollmaster:readings:{sensorId}";
 }

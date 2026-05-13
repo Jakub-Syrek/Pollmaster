@@ -46,7 +46,7 @@ public sealed class StationSnapshotService : IStationSnapshotService
     /// <inheritdoc />
     public async Task<Result<StationSnapshotDto>> GetSnapshotAsync(int stationId, CancellationToken cancellationToken)
     {
-        var key = $"pollmaster:snapshot:{stationId}";
+        var key = CacheKeys.SnapshotForStation(stationId);
         if (_cache.TryGetValue(key, out StationSnapshotDto? cached) && cached is not null)
         {
             return Result<StationSnapshotDto>.Success(cached);

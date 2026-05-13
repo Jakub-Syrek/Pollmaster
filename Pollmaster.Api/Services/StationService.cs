@@ -14,7 +14,6 @@ namespace Pollmaster.Api.Services;
 /// </summary>
 public sealed class StationService : IStationService
 {
-    private const string CacheKey = "pollmaster:stations:all";
     private const int PageSize = 500;
     private const int MaxPages = 50;
 
@@ -48,7 +47,7 @@ public sealed class StationService : IStationService
     /// <inheritdoc />
     public async Task<Result<IReadOnlyList<StationDto>>> GetStationsAsync(CancellationToken cancellationToken)
     {
-        if (_cache.TryGetValue(CacheKey, out IReadOnlyList<StationDto>? cached) && cached is not null)
+        if (_cache.TryGetValue(CacheKeys.Stations, out IReadOnlyList<StationDto>? cached) && cached is not null)
         {
             return Result<IReadOnlyList<StationDto>>.Success(cached);
         }
@@ -59,7 +58,7 @@ public sealed class StationService : IStationService
             return Result<IReadOnlyList<StationDto>>.Failure("Failed to load stations from GIOŚ.");
         }
 
-        _cache.Set(CacheKey, stations, TimeSpan.FromMinutes(_cacheOptions.StationsTtlMinutes));
+        _cache.Set(CacheKeys.Stations, stations, TimeSpan.FromMinutes(_cacheOptions.StationsTtlMinutes));
         return Result<IReadOnlyList<StationDto>>.Success(stations);
     }
 

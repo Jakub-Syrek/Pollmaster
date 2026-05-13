@@ -42,6 +42,7 @@ builder.Services.AddSingleton<IMeasurementMapper, MeasurementMapper>();
 builder.Services.AddSingleton<IAirQualityIndexMapper, AirQualityIndexMapper>();
 builder.Services.AddSingleton<IWhoLimitProvider, WhoLimitProvider>();
 builder.Services.AddSingleton<ISeverityCalculator, WhoSeverityCalculator>();
+builder.Services.AddSingleton<IOverviewProjector, OverviewProjector>();
 builder.Services.AddSingleton<IOverviewSnapshotStore, FileOverviewSnapshotStore>();
 
 builder.Services.AddScoped<IStationService, StationService>();

@@ -40,7 +40,7 @@ public sealed class SensorService : ISensorService
     /// <inheritdoc />
     public async Task<Result<IReadOnlyList<SensorDto>>> GetSensorsAsync(int stationId, CancellationToken cancellationToken)
     {
-        var key = CacheKey(stationId);
+        var key = CacheKeys.SensorsForStation(stationId);
         if (_cache.TryGetValue(key, out IReadOnlyList<SensorDto>? cached) && cached is not null)
         {
             return Result<IReadOnlyList<SensorDto>>.Success(cached);
@@ -60,5 +60,4 @@ public sealed class SensorService : ISensorService
         return Result<IReadOnlyList<SensorDto>>.Success(readOnly);
     }
 
-    private static string CacheKey(int stationId) => $"pollmaster:sensors:{stationId}";
 }

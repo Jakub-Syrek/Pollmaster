@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Pollmaster.Api.Configuration;
 using Pollmaster.Shared.Contracts;
+// Hot-path JSON via System.Text.Json source generation — avoids reflection on every save / load.
 
 namespace Pollmaster.Api.Persistence;
 
@@ -18,11 +19,7 @@ public sealed class FileOverviewSnapshotStore : IOverviewSnapshotStore
     private const string FileSuffix = ".json";
     private const string TimestampFormat = "yyyyMMddTHHmmssfffZ";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = false,
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly OverviewJsonContext JsonContext = OverviewJsonContext.Default;
 
     private readonly OverviewPersistenceOptions _options;
     private readonly string _resolvedDirectory;
@@ -66,7 +63,7 @@ public sealed class FileOverviewSnapshotStore : IOverviewSnapshotStore
             {
                 await using var stream = newest.OpenRead();
                 return await JsonSerializer
-                    .DeserializeAsync<OverviewSnapshot>(stream, JsonOptions, cancellationToken)
+                    .DeserializeAsync(stream, JsonContext.OverviewSnapshot, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or JsonException)
@@ -97,7 +94,7 @@ public sealed class FileOverviewSnapshotStore : IOverviewSnapshotStore
             await using (var stream = File.Create(path))
             {
                 await JsonSerializer
-                    .SerializeAsync(stream, snapshot, JsonOptions, cancellationToken)
+                    .SerializeAsync(stream, snapshot, JsonContext.OverviewSnapshot, cancellationToken)
                     .ConfigureAwait(false);
             }
             Prune();
