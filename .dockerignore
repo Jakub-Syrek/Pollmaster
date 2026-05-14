@@ -1,0 +1,41 @@
+# Docker build context exclusions for Pollmaster.Api production image.
+# Keep the context tiny — Docker SHIPs the entire build context to the daemon
+# before any RUN executes, so anything not strictly needed for the API image
+# is excluded here.
+
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/.idea/
+
+# MAUI client + tests are NOT part of the backend image.
+Pollmaster/
+Pollmaster.Api.Tests/
+
+# Local runtime artefacts.
+Pollmaster.Api/cache/
+**/*.log
+**/.DS_Store
+**/Thumbs.db
+
+# Git + CI metadata.
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Editor / OS noise.
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Already-built images and packages.
+**/publish/
+**/*.nupkg
+
+# Documentation / dev tooling.
+*.md
+LICENSE
+dev-*.ps1

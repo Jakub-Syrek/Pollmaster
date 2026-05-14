@@ -15,6 +15,17 @@ const string CorsPolicy = "PollmasterCors";
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Container hosts (Railway, Render, Fly, Heroku) advertise the inbound port
+// through the PORT env var. Pick it up before any other URL configuration so
+// Kestrel binds to 0.0.0.0:$PORT inside the container; locally PORT is unset
+// and the regular launchSettings / ASPNETCORE_URLS rules apply.
+var injectedPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(injectedPort) &&
+    int.TryParse(injectedPort, out var port) && port > 0)
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+
 builder.Services.AddOpenApi();
 builder.Services.AddMemoryCache();
 builder.Services.AddProblemDetails();

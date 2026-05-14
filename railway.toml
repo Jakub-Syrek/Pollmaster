@@ -1,0 +1,27 @@
+# Railway deployment manifest for Pollmaster.Api.
+#
+# Railway auto-detects the Dockerfile at the repo root, so the build section
+# only needs to confirm that. The deploy section pins health-check and restart
+# behaviour we want for the backend.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# /healthz is the cheap liveness route (200 OK while the process is up).
+# /healthz/ready runs every IHealthCheck and would also work, but the readiness
+# probe can flap during the initial warmup (~5 min cold cache) and Railway
+# would mark the deploy unhealthy. Liveness is the right semantic for routing.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 15
+
+# Restart the container on crash — but cap retries so a poison-pill error
+# (e.g. bad config) doesn't burn $5 of credit in a redeploy loop.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# Railway sleeps containers only on the legacy free trial. The Hobby plan keeps
+# them warm, which is what we want — the OverviewCacheWarmupService rebuilds
+# the cache every 30 min, and sleep would defeat that.
+sleepApplication = false
