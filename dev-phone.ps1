@@ -230,17 +230,42 @@ function Invoke-AdbPair {
 }
 
 function Invoke-AdbConnect {
+    <#
+    .DESCRIPTION
+    Connects adb to the supplied Wireless-debugging target. Android frequently rotates the
+    port — leaving and re-entering the Wireless debugging screen, the screen turning off,
+    or doze kicking in all spawn a fresh port. We retry the connect a few times, each time
+    re-scanning mDNS so a port that rolled between scan and connect is picked up.
+    #>
     param(
         [Parameter(Mandatory)][string]$AdbPath,
-        [Parameter(Mandatory)][string]$Target
+        [Parameter(Mandatory)][string]$Target,
+        [int]$MaxAttempts = 4,
+        [int]$RetryDelaySeconds = 3
     )
-    Write-Section "Connecting wireless adb to $Target"
-    $output = Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('connect', $Target)
-    $lines = @($output | ForEach-Object { $_.ToString() })
-    Write-Host ($lines -join [Environment]::NewLine) -ForegroundColor DarkGray
-    if ($lines -match 'failed to connect|cannot connect') {
-        throw "adb connect $Target failed. Verify the IP/port shown under Wireless debugging."
+    $currentTarget = $Target
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        Write-Section "Connecting wireless adb to $currentTarget (attempt $attempt/$MaxAttempts)"
+        $output = Invoke-AdbQuietly -AdbPath $AdbPath -Arguments @('connect', $currentTarget)
+        $lines = @($output | ForEach-Object { $_.ToString() })
+        Write-Host ($lines -join [Environment]::NewLine) -ForegroundColor DarkGray
+        $connected = $lines | Where-Object { $_ -match '^connected to|already connected' }
+        if ($connected) {
+            return
+        }
+        if ($attempt -ge $MaxAttempts) {
+            break
+        }
+        # Android sometimes rotates the connect port between attempts. Re-scan mDNS so the
+        # next try lands on whatever port the phone is broadcasting *right now*.
+        $refreshed = Find-WirelessAdbTarget -AdbPath $AdbPath
+        if ($refreshed -and $refreshed -ne $currentTarget) {
+            Write-Host "   mDNS now reports $refreshed (was $currentTarget)" -ForegroundColor DarkGray
+            $currentTarget = $refreshed
+        }
+        Start-Sleep -Seconds $RetryDelaySeconds
     }
+    throw "adb connect $Target failed after $MaxAttempts attempts. Keep the Wireless debugging screen visible on the phone (the port closes the moment the screen rotates or the dialog is dismissed), then re-run the script."
 }
 
 function Get-OnlineDeviceLines {
