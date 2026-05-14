@@ -364,9 +364,47 @@ function Start-BackendWindow {
     Start-Process -FilePath $shellPath -ArgumentList @('-NoExit', '-NoProfile', '-Command', $command) | Out-Null
 }
 
+function Select-PreferredSerial {
+    <#
+    .DESCRIPTION
+    Picks exactly one adb serial from the connected device list. Same logic as in
+    prod-phone.ps1: prefer USB serial, then ip:port wireless, then mDNS entry. Passed
+    to dotnet build as -p:AdbTarget=-s <serial> so Release-mode bundletool builds do
+    not fail with "More than one device connected, please provide --device-id" when
+    USB + wireless are both attached.
+    #>
+    param([Parameter(Mandatory)][string[]]$DeviceLines)
+    $serials = $DeviceLines |
+        ForEach-Object { ($_ -split "`t")[0].Trim() } |
+        Where-Object { $_ }
+    if (-not $serials -or $serials.Count -eq 0) {
+        return $null
+    }
+    if ($serials.Count -eq 1) {
+        return $serials[0]
+    }
+    $usb = $serials | Where-Object { $_ -notmatch '[.:]' -and $_ -notmatch '_adb-tls-connect' } | Select-Object -First 1
+    if ($usb) { return $usb }
+    $ipPort = $serials | Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}:\d+$' } | Select-Object -First 1
+    if ($ipPort) { return $ipPort }
+    return $serials[0]
+}
+
 function Deploy-Android {
+    param([string]$Serial)
     Write-Section 'Building + deploying MAUI client to the connected phone'
-    & dotnet build $MauiProjectPath '-t:Run' '--framework' $AndroidTfm '--configuration' $Configuration '--nologo'
+    $buildArgs = @(
+        'build', $MauiProjectPath,
+        '-t:Run',
+        '--framework', $AndroidTfm,
+        '--configuration', $Configuration,
+        '--nologo'
+    )
+    if ($Serial) {
+        Write-Host "   Targeting adb serial: $Serial" -ForegroundColor DarkGray
+        $buildArgs += "-p:AdbTarget=-s $Serial"
+    }
+    & dotnet @buildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "MAUI Android deploy failed (exit $LASTEXITCODE)."
     }
@@ -407,7 +445,16 @@ if (-not $SkipBackend) {
     Start-Sleep -Seconds 3
 }
 
-Deploy-Android
+# Pin bundletool to exactly one serial - USB + wireless or duplicate mDNS+ip:port
+# entries otherwise break the Release-mode build. Cheap in Debug mode, essential in
+# Release.
+$deviceLines = Get-OnlineDeviceLines -AdbPath $adb
+$serial = Select-PreferredSerial -DeviceLines $deviceLines
+if ($serial) {
+    Write-Host "Selected device serial: $serial" -ForegroundColor Green
+}
+
+Deploy-Android -Serial $serial
 
 Write-Host ''
 Write-Host "Backend on http://$lanIp`:5100  |  Health: http://$lanIp`:5100/healthz" -ForegroundColor Green

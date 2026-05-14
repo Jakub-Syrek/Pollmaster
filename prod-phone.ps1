@@ -302,6 +302,36 @@ function Get-OnlineDeviceLines {
     return @($lines | Select-Object -Skip 1 | Where-Object { $_ -match '\t(device)$' })
 }
 
+function Select-PreferredSerial {
+    <#
+    .DESCRIPTION
+    Picks exactly one adb serial out of the connected device list. Release builds go
+    through bundletool, which rejects "more than one device connected, please provide
+    --device-id" - so we deterministically choose a single target and pass it as
+    -p:AdbTarget=-s <serial> to dotnet build. The same phone often shows up twice
+    (e.g. once as 192.168.0.88:34667 and once as the mDNS service name), and this
+    function de-duplicates by picking the most stable identifier:
+      1. USB serial (no dots, no colons, not an mDNS entry) - rock-solid, no rotating ports.
+      2. ip:port wireless serial - bundletool handles these natively.
+      3. mDNS _adb-tls-connect._tcp service entry - last resort.
+    #>
+    param([Parameter(Mandatory)][string[]]$DeviceLines)
+    $serials = $DeviceLines |
+        ForEach-Object { ($_ -split "`t")[0].Trim() } |
+        Where-Object { $_ }
+    if (-not $serials -or $serials.Count -eq 0) {
+        return $null
+    }
+    if ($serials.Count -eq 1) {
+        return $serials[0]
+    }
+    $usb = $serials | Where-Object { $_ -notmatch '[.:]' -and $_ -notmatch '_adb-tls-connect' } | Select-Object -First 1
+    if ($usb) { return $usb }
+    $ipPort = $serials | Where-Object { $_ -match '^\d{1,3}(\.\d{1,3}){3}:\d+$' } | Select-Object -First 1
+    if ($ipPort) { return $ipPort }
+    return $serials[0]
+}
+
 function Assert-DeviceConnected {
     <#
     .DESCRIPTION
@@ -341,8 +371,26 @@ function Assert-DeviceConnected {
 }
 
 function Deploy-Android {
+    <#
+    .DESCRIPTION
+    Builds and deploys the MAUI Android target. When -Serial is supplied we pass it as
+    -p:AdbTarget=-s <serial>, which bundletool / xabuild forward to adb so multi-device
+    setups don't blow up with "More than one device connected, please provide --device-id".
+    #>
+    param([string]$Serial)
     Write-Section "Building + deploying MAUI client to the connected phone ($Configuration)"
-    & dotnet build $MauiProjectPath '-t:Run' '--framework' $AndroidTfm '--configuration' $Configuration '--nologo'
+    $buildArgs = @(
+        'build', $MauiProjectPath,
+        '-t:Run',
+        '--framework', $AndroidTfm,
+        '--configuration', $Configuration,
+        '--nologo'
+    )
+    if ($Serial) {
+        Write-Host "   Targeting adb serial: $Serial" -ForegroundColor DarkGray
+        $buildArgs += "-p:AdbTarget=-s $Serial"
+    }
+    & dotnet @buildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "MAUI Android deploy failed (exit $LASTEXITCODE)."
     }
@@ -372,7 +420,17 @@ if ($Connect) {
 $allowAutoConnect = -not $Connect -and -not $PairWith
 Assert-DeviceConnected -AdbPath $adb -AllowAutoConnect $allowAutoConnect
 
-Deploy-Android
+# Re-read the device list AFTER connection has settled so we can pin bundletool to
+# exactly one serial. Multi-device setups (USB + wireless, or wireless ip:port + the
+# same phone broadcast over mDNS) otherwise fail the Release build with
+# "More than one device connected, please provide --device-id".
+$deviceLines = Get-OnlineDeviceLines -AdbPath $adb
+$serial = Select-PreferredSerial -DeviceLines $deviceLines
+if ($serial) {
+    Write-Host "Selected device serial: $serial" -ForegroundColor Green
+}
+
+Deploy-Android -Serial $serial
 
 Write-Host ''
 Write-Host "MAUI client deployed. Production backend: $baseAddress" -ForegroundColor Green
