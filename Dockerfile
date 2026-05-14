@@ -54,12 +54,17 @@ ENV DOTNET_USE_POLLING_FILE_WATCHER=false
 ENV PORT=8080
 EXPOSE 8080
 
-# Persistent storage for the per-station overview snapshot. Railway/Fly volumes
-# can be mounted here so the cache survives container restarts; without a volume
-# the directory simply lives inside the container fs (ephemeral, which is fine —
-# the warmup service repopulates it after every redeploy).
+# Persistent storage for the per-station overview snapshot. Lives inside the
+# container fs by default — ephemeral, gets recreated after every redeploy by
+# the OverviewCacheWarmupService. Mount a real volume here for cross-restart
+# persistence:
+#   - Railway: Settings → Volumes → Add Volume → mount path /app/cache
+#   - Docker:  docker run -v pollmaster-cache:/app/cache ...
+#   - Fly.io:  fly volumes create pollmaster_cache → mount via fly.toml
+# Note: a `VOLUME` directive is NOT used here. Railway's builder rejects it
+# ("docker VOLUME ... is not supported, use Railway Volumes") and every other
+# host treats the named volume as a deployment concern, not a build concern.
 ENV OverviewPersistence__Directory=/app/cache
-VOLUME /app/cache
 
 COPY --from=build --chown=app:app /app/publish ./
 
