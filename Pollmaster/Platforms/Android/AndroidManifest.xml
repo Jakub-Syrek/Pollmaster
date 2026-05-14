@@ -9,4 +9,10 @@
         android:usesCleartextTraffic="true"></application>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Location permissions for the "Center on me" button in MapView. We use coarse +
+         fine; the user gets the system runtime prompt the first time the button is
+         tapped. Without either of these the Maui Essentials Geolocation API throws
+         FeatureNotEnabledException. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

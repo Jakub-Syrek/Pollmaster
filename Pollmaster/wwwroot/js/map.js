@@ -14,7 +14,9 @@
         activeLayer: 'markers',
         satelliteLayer: null,
         satelliteLayerKey: null,
-        satelliteMarker: null
+        satelliteMarker: null,
+        userLocationMarker: null,
+        userAccuracyCircle: null
     };
 
     // NASA GIBS WMTS endpoints — public, no API key, served via CloudFront. Each layer is a
@@ -489,6 +491,54 @@
         }
     }
 
+    function centerOnLocation(lat, lon, accuracyMeters) {
+        if (!state.map) {
+            return;
+        }
+        const latLng = [lat, lon];
+
+        // Drop a pulsing blue dot for the user position. Re-uses the same marker on
+        // repeat presses so we never leave stale markers behind.
+        if (state.userLocationMarker) {
+            state.userLocationMarker.setLatLng(latLng);
+        } else {
+            state.userLocationMarker = L.marker(latLng, {
+                icon: L.divIcon({
+                    className: '',
+                    html: '<div class="aq-user-location"><div class="aq-user-location__core"></div></div>',
+                    iconSize: [22, 22],
+                    iconAnchor: [11, 11]
+                }),
+                zIndexOffset: 1000  // stays on top of station markers
+            }).addTo(state.map);
+            state.userLocationMarker.bindPopup('<div class="aq-popup aq-popup--probe"><div class="aq-popup__title">You are here</div></div>');
+        }
+
+        // Translucent accuracy circle (only if the platform gave us a meaningful radius).
+        const radius = typeof accuracyMeters === 'number' && isFinite(accuracyMeters) && accuracyMeters > 0
+            ? accuracyMeters
+            : 0;
+        if (state.userAccuracyCircle) {
+            state.map.removeLayer(state.userAccuracyCircle);
+            state.userAccuracyCircle = null;
+        }
+        if (radius > 0) {
+            state.userAccuracyCircle = L.circle(latLng, {
+                radius: radius,
+                color: '#38bdf8',
+                weight: 1,
+                fillColor: '#38bdf8',
+                fillOpacity: 0.12,
+                interactive: false
+            }).addTo(state.map);
+        }
+
+        // Animated fly-in. Zoom 14 = ~city-block detail; clamp so very fine accuracy
+        // doesn't over-zoom past the OSM raster cap.
+        const zoom = radius > 0 && radius < 50 ? 16 : 14;
+        state.map.flyTo(latLng, zoom, { animate: true, duration: 1.0 });
+    }
+
     function dispose() {
         if (state.map) {
             state.map.remove();
@@ -503,12 +553,15 @@
         state.satelliteLayer = null;
         state.satelliteLayerKey = null;
         state.satelliteMarker = null;
+        state.userLocationMarker = null;
+        state.userAccuracyCircle = null;
     }
 
     window.pollmasterMap = {
         initMap: initMap,
         addStations: addStations,
         setSatelliteReading: setSatelliteReading,
+        centerOnLocation: centerOnLocation,
         // updateStationSensors removed — popups now serve straight from the overview payload.
         dispose: dispose
     };

@@ -20,6 +20,10 @@
             <button type="button" class="map-page__btn"
                     @onclick="OnRefreshClickedAsync"
                     disabled="@_busy">Refresh</button>
+            <button type="button" class="map-page__btn map-page__btn--center"
+                    @onclick="OnCenterClickedAsync"
+                    disabled="@_busy"
+                    title="Centre the map on your current location">Center</button>
             <button type="button" class="map-page__btn"
                     @onclick="OnScreenshotClickedAsync"
                     disabled="@_busy">Screenshot</button>
@@ -193,6 +197,61 @@
         }
         await RunCaptureAsync(() => LoadOverviewAsync(_cts.Token),
             failureStatus: "Refresh failed.");
+    }
+
+    /// <summary>
+    /// Centre the Leaflet map on the device's current location. Uses MAUI Essentials
+    /// <see cref="Microsoft.Maui.Devices.Sensors.Geolocation"/> rather than the
+    /// in-WebView HTML5 navigator.geolocation: native API bypasses the WebView
+    /// permissions prompt plumbing (which is fiddly on Android Blazor Hybrid) and
+    /// gives us a clean PermissionStatus value to surface in the status line.
+    /// </summary>
+    private async Task OnCenterClickedAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+        await RunCaptureAsync(async () =>
+        {
+            _status = "Requesting location permission…";
+            StateHasChanged();
+
+            var permission = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
+            if (permission != PermissionStatus.Granted)
+            {
+                permission = await Permissions.RequestAsync<Permissions.LocationWhenInUse>();
+            }
+            if (permission != PermissionStatus.Granted)
+            {
+                _status = "Location permission denied — cannot centre the map.";
+                StateHasChanged();
+                return;
+            }
+
+            _status = "Locating…";
+            StateHasChanged();
+
+            // Medium accuracy ≈ 100 m city block, plenty for a map pan and ~2× faster
+            // than High (which spins up the GPS chip). 10 s timeout keeps the UI from
+            // hanging indefinitely if the user is indoors / no fix.
+            var request = new GeolocationRequest(GeolocationAccuracy.Medium, TimeSpan.FromSeconds(10));
+            var location = await Geolocation.Default.GetLocationAsync(request, _cts.Token);
+            if (location is null)
+            {
+                _status = "Could not determine your location.";
+                StateHasChanged();
+                return;
+            }
+
+            await JS.InvokeVoidAsync(
+                "pollmasterMap.centerOnLocation",
+                _cts.Token,
+                location.Latitude,
+                location.Longitude,
+                location.Accuracy ?? 0);
+            _status = $"Centred on ({location.Latitude:F4}, {location.Longitude:F4}).";
+        }, failureStatus: "Center failed.");
     }
 
     private async Task OnScreenshotClickedAsync()
