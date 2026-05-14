@@ -143,9 +143,15 @@ the meantime so the satellite endpoint stays green.
                                   │
                        ┌──────────┴──────────┐
                        │   Pollmaster MAUI   │  Blazor Hybrid + Leaflet.js
-                       │   Windows + Android │
-                       └─────────────────────┘
+                       │   Windows + Android │  + FileOfflineOverviewCache
+                       └─────────────────────┘     (renders cached map < 50 ms,
+                                                    survives offline / cold-start)
 ```
+
+The backend ships in a multi-stage `Dockerfile` and deploys to Railway (recommended),
+Render, Fly.io, Hetzner — any container host. `Program.cs` binds to the `$PORT` env var
+when present so the same image runs on every PaaS provider unchanged. See
+[Deployment](#deployment).
 
 A second pipeline serves **satellite / model-assimilated** data for arbitrary points on
 the map. Two layers operate side-by-side:
@@ -505,32 +511,44 @@ Mandatory production settings:
 - `Warmup:Enabled` = `true` so cold-start latency lands on the warmup, not the user.
 - Persist `OverviewPersistence:Directory` somewhere durable (e.g. `/var/lib/pollmaster/cache/`).
 
-### Backend — Docker
+### Backend — Railway (recommended, ~$5/mo)
 
-```Dockerfile
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-WORKDIR /src
-COPY . .
-RUN dotnet publish Pollmaster.Api -c Release -o /app/publish --no-self-contained
+The repo ships with a production `Dockerfile` at the root and a `railway.toml` deploy
+manifest. Railway auto-detects both and gives you a stable HTTPS URL like
+`pollmaster-production.up.railway.app`.
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
-WORKDIR /app
-COPY --from=build /app/publish .
-VOLUME ["/app/cache"]
-ENV ASPNETCORE_URLS=http://+:5100
-ENV OverviewPersistence__Directory=/app/cache
-EXPOSE 5100
-ENTRYPOINT ["dotnet", "Pollmaster.Api.dll"]
-```
+One-time setup:
+
+1. Sign in at [railway.app](https://railway.app) with GitHub (no credit card needed for
+   sign-in — only when you actually subscribe to Hobby).
+2. **New Project → Deploy from GitHub repo → `Pollmaster`**.
+3. Service settings → **Root Directory**: leave blank (Dockerfile is at repo root).
+4. Service settings → **Variables**:
+   - `OpenWeatherMap__ApiKey` = your OWM key (optional — CAMS works without it).
+   - `Cors__AllowedOrigins__0` = your MAUI client origin or `*` for the personal phone.
+5. Service settings → **Networking → Generate Domain** (or attach a custom one).
+6. Copy the URL into `Pollmaster/Resources/Raw/appsettings.Android.json` →
+   `PollmasterApi.BaseAddress`, then redeploy the MAUI client.
+
+Every subsequent `git push origin main` triggers a redeploy. The
+`OverviewCacheWarmupService` keeps the cache hot continuously — Railway's Hobby plan
+does not sleep idle containers, so the warmup actually runs, unlike scale-to-zero free
+tiers.
+
+### Backend — generic Docker host (Fly.io, Render, Hetzner, anywhere)
+
+The same `Dockerfile` runs unchanged on every container host. Build and ship:
 
 ```powershell
 docker build -t pollmaster-api .
-docker run -d --name pollmaster -p 5100:5100 -v pollmaster-cache:/app/cache pollmaster-api
+docker run -d --name pollmaster -p 8080:8080 -v pollmaster-cache:/app/cache `
+    -e OpenWeatherMap__ApiKey=$env:OWM_KEY pollmaster-api
 ```
 
-The `/app/cache` volume preserves the disk snapshot across container restarts — first
-hit after `docker restart` serves the persisted file immediately instead of re-fetching
-the entire overview.
+The image listens on `$PORT` when injected (Railway / Render / Heroku style) and falls
+back to 8080 otherwise. The `/app/cache` volume preserves the disk snapshot across
+restarts — first hit after a redeploy serves the persisted file immediately instead of
+waiting on a fresh GIOŚ fan-out.
 
 ### Backend — Kubernetes probes
 
@@ -551,6 +569,21 @@ readinessProbe:
 
 The readiness probe returns `Degraded` (HTTP 200) when the disk snapshot is stale —
 configure your platform to treat that as "send traffic, but flag in monitoring".
+
+### MAUI offline cache
+
+The Blazor client persists every successful `/api/overview` response to
+`FileSystem.AppDataDirectory` (`FileOfflineOverviewCache`). On startup the map renders
+from that snapshot **before** the network request returns, so the user sees populated
+markers within ~50 ms even when:
+
+- the device is offline (no Wi-Fi, no mobile data, plane mode);
+- the backend is cold-starting on a sleepy free-tier host;
+- the backend is down entirely.
+
+The header status line indicates the state (`Offline cache: 290 stations · 12 min old ·
+refreshing…`) and is replaced when the network refresh completes. An empty server
+response never overwrites a good snapshot — see `FileOfflineOverviewCache.SaveAsync`.
 
 ### MAUI client distribution
 
