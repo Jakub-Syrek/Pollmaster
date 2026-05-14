@@ -5,13 +5,22 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-blue)](https://dotnet.microsoft.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Polish air-quality visualization. Pollmaster pulls live pollutant measurements and the
-national air-quality index from the GIOŚ public API, hides the upstream Polish JSON-LD
-shape behind clean English contracts, persists a per-station snapshot to disk, and
-renders every monitoring station on a Leaflet map. Marker colours come from the
-station's worst pollutant against the WHO 2021 short-term guidelines; per-pollutant
-heatmap layers and a stale-while-revalidate cache keep the UI responsive even when the
-GIOŚ rate limits push the upstream fetch into the minutes range.
+Polish air-quality visualization, end-to-end. Pollmaster fuses three independent data
+streams onto one Leaflet map:
+
+1. **GIOŚ ground stations** — every active Polish monitoring point, severity-coloured
+   against the WHO 2021 short-term guidelines, with per-pollutant heatmap layers.
+2. **Copernicus CAMS satellite-model** — assimilated Sentinel-5P + surface stations over
+   a 10 km European grid; clickable anywhere on the map, no API key needed.
+3. **NASA GIBS WMTS overlays** — aerosol optical depth and tropospheric NO₂ as
+   translucent raster tiles, public and unauthenticated.
+
+The backend hides the upstream Polish JSON-LD shape behind clean English contracts,
+persists a per-station snapshot to disk for cold-start resilience, and orchestrates a
+Strategy-pattern provider chain for the satellite layer (CAMS by default, OpenWeatherMap
+as an optional secondary source). A stale-while-revalidate cache plus aggressive
+client-side rendering keep the UI responsive even when the GIOŚ rate limiter pushes the
+upstream fetch into the minutes range.
 
 ---
 
@@ -73,6 +82,21 @@ dotnet run --project Pollmaster --framework net10.0-windows10.0.19041.0
 dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android
 ```
 
+### Optional: enable OpenWeatherMap as a secondary satellite source
+
+The default deployment ships with the Copernicus CAMS provider enabled — no key, no
+registration, working immediately. If you also want OpenWeatherMap in the provider chain
+(richer NH₃ field, OWM's own AQI categorisation), drop your free API key into user
+secrets:
+
+```powershell
+cd Pollmaster.Api
+dotnet user-secrets set "OpenWeatherMap:ApiKey" "your-32-hex-key"
+```
+
+Fresh OWM keys take 10–60 min to activate upstream; the chain falls through to CAMS in
+the meantime so the satellite endpoint stays green.
+
 ---
 
 ## Architecture
@@ -123,27 +147,36 @@ dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android
                        └─────────────────────┘
 ```
 
-A second, parallel pipeline serves **satellite-assimilated** data for arbitrary points on
-the map:
+A second pipeline serves **satellite / model-assimilated** data for arbitrary points on
+the map. Two layers operate side-by-side:
 
 ```
-   ┌───────────────────────────┐        ┌──────────────────────────────┐
-   │ NASA GIBS WMTS (public)   │        │ OpenWeatherMap Air Pollution │
-   │ MODIS AOD, OMI NO₂ tiles  │        │ /data/2.5/air_pollution      │
-   └───────────┬───────────────┘        └──────────────┬───────────────┘
-               │ raster tiles (no auth)                │ JSON (free tier API key)
-               ▼                                       ▼
-       Leaflet TileLayer                   IOwmApiClient → SatellitePollutionService
-       (toggleable overlay)                memory cache (~110 m grid, 10 min TTL)
-                                                       │
-                                                       ▼
-                                       /api/satellite/point?lat=…&lon=…
+   Raster tiles (Leaflet TileLayer, no auth)        Point readings (REST JSON)
+   ┌───────────────────────────────────┐        ┌───────────────────────────────┐
+   │ NASA GIBS WMTS                    │        │ Open-Meteo (Copernicus CAMS)  │
+   │ MODIS AOD, OMI NO₂                │        │ /v1/air-quality   no API key  │
+   └────────────┬──────────────────────┘        └──────────────┬────────────────┘
+                                                               │
+                                                ┌──────────────┴────────────────┐
+                                                │ OpenWeatherMap Air Pollution  │  optional
+                                                │ /data/2.5/air_pollution       │  key
+                                                └──────────────┬────────────────┘
+                                                               │
+                                                ISatelliteProvider[]   (Strategy)
+                                                CamsSatelliteProvider  (priority 1)
+                                                OwmSatelliteProvider   (priority 2)
+                                                               │
+                                                SatellitePollutionService
+                                                (orchestrator + per-provider cache)
+                                                               │
+                                                /api/satellite/point?lat=…&lon=…
 ```
 
 The frontend overlays GIBS as a translucent raster layer for an at-a-glance regional
-picture; tapping any point on the map fires `/api/satellite/point` for a numeric
-breakdown (PM2.5/PM10/NO₂/SO₂/O3/CO/NH3 + 1–5 AQI) at that exact coordinate, rendered
-in a popup with the same WHO-limit bars that the GIOŚ markers use.
+picture; tapping any point on the map fires `/api/satellite/point`, which walks the
+provider chain (CAMS first, OWM second), returns the first hit, and the UI renders the
+same WHO-limit severity bars that the GIOŚ markers use. The DTO carries a `source` field
+so the popup attributes the reading to the upstream that answered.
 
 ### Solution layout
 
@@ -165,6 +198,7 @@ Pollmaster.slnx
 | Gateway                  | `IGiosApiClient` + `GiosApiClient`                                      | Isolate HTTP / JSON details from business logic                                      |
 | Facade                   | `StationSnapshotService`                                                | Compose station + sensors + index + readings behind one call                         |
 | Strategy                 | `IWhoLimitProvider`, `ISeverityCalculator`, `IOverviewProjector`        | Swappable rule tables / projection                                                   |
+| Strategy + Chain         | `ISatelliteProvider` + `CamsSatelliteProvider` + `OwmSatelliteProvider` | Try multiple satellite sources in priority order; new providers slot in as one class |
 | Single-flight gate       | `OverviewService` static `SemaphoreSlim`                                | Only one GIOŚ fan-out at a time, even under concurrent calls                         |
 | Stale-while-revalidate   | `OverviewService.GetOverviewAsync` + `RefreshIfStaleAsync`              | Always serve cached data; refresh in the background                                  |
 | Background service       | `OverviewCacheWarmupService`                                            | Hosted `BackgroundService` that warms the cache every 30 min                         |
@@ -277,6 +311,12 @@ options class with `ValidateOnStart`.
     "ApiKey": "",
     "TimeoutSeconds": 10,
     "CacheTtlSeconds": 600
+  },
+  "Cams": {
+    "BaseAddress": "https://air-quality-api.open-meteo.com/",
+    "TimeoutSeconds": 10,
+    "CacheTtlSeconds": 600,
+    "Enabled": true
   }
 }
 ```
@@ -292,8 +332,10 @@ options class with `ValidateOnStart`.
 | `OverviewPersistence.Directory`| string                     | `cache`        | Folder for `overview-<timestamp>.json` files. Relative paths resolve against ContentRoot.   |
 | `OverviewPersistence.FreshnessMinutes` | int                | 30             | Threshold at which the warmup considers the disk snapshot stale and rebuilds it.            |
 | `OverviewPersistence.RetainCount`      | int                | 5              | How many historical snapshots to keep on disk after each save.                              |
-| `OpenWeatherMap.ApiKey`        | string (optional)          | empty          | OpenWeatherMap Air Pollution API key. When empty, `/api/satellite/*` short-circuits with 503 and the map's satellite probe stays inert. Sign up free at openweathermap.org for 1 000 req/day. |
-| `OpenWeatherMap.CacheTtlSeconds` | int                      | 600            | Per-point cache lifetime — coordinates are rounded to ~110 m before hashing so neighbouring taps share the hit. |
+| `OpenWeatherMap.ApiKey`        | string (optional)          | empty          | OpenWeatherMap Air Pollution API key. When empty, OWM is skipped in the provider chain; with CAMS enabled the satellite endpoint still answers. Sign up free at openweathermap.org for 1 000 req/day. |
+| `OpenWeatherMap.CacheTtlSeconds` | int                      | 600            | Per-point cache lifetime for the OWM provider — coordinates are rounded to ~110 m before hashing so neighbouring taps share the hit. |
+| `Cams.Enabled`                 | bool                       | true           | Master switch for the CAMS (Copernicus, via Open-Meteo) provider. No key required — disable only when forcing OWM-only behaviour in tests. |
+| `Cams.CacheTtlSeconds`         | int                        | 600            | Per-point cache lifetime for the CAMS provider. Same ~110 m grid hashing as OWM, but stored under a separate cache key so OWM failures cannot poison CAMS hits. |
 
 ### MAUI client configuration
 

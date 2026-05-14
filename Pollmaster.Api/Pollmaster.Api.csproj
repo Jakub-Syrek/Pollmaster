@@ -10,6 +10,15 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <Version>1.11.1</Version>
     <UserSecretsId>pollmaster-api-bf18d4</UserSecretsId>
+    <Authors>Jakub Syrek</Authors>
+    <Company>Jakub Syrek</Company>
+    <Product>Pollmaster API</Product>
+    <Description>ASP.NET Core 10 backend for Pollmaster. Aggregates Polish GIOS ground-station readings with Copernicus CAMS and OpenWeatherMap satellite-assimilated forecasts behind a Strategy-pattern provider chain. Stale-while-revalidate cache (memory + disk), background warmup, sliding-window rate limiter, resilience pipeline and structured health checks.</Description>
+    <PackageProjectUrl>https://github.com/Jakub-Syrek/Pollmaster</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Jakub-Syrek/Pollmaster</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) Jakub Syrek</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

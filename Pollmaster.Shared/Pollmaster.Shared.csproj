@@ -8,6 +8,15 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <Version>1.11.1</Version>
+    <Authors>Jakub Syrek</Authors>
+    <Company>Jakub Syrek</Company>
+    <Product>Pollmaster Shared Contracts</Product>
+    <Description>Shared API contracts (DTOs and Result discriminated union) used by both the Pollmaster API backend and the MAUI Blazor Hybrid client.</Description>
+    <PackageProjectUrl>https://github.com/Jakub-Syrek/Pollmaster</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Jakub-Syrek/Pollmaster</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) Jakub Syrek</Copyright>
   </PropertyGroup>
 
 </Project>

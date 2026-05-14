@@ -28,6 +28,13 @@
         <ApplicationDisplayVersion>1.11.1</ApplicationDisplayVersion>
         <ApplicationVersion>1</ApplicationVersion>
 
+        <!-- Metadata -->
+        <Authors>Jakub Syrek</Authors>
+        <Company>Jakub Syrek</Company>
+        <Product>Pollmaster</Product>
+        <Description>Pollmaster — Polish air-quality map. .NET MAUI Blazor Hybrid client (Windows + Android) rendering live GIOS ground-station readings together with Copernicus CAMS satellite-model overlays on a Leaflet map. Screenshot + screen-recording export, per-pollutant heatmaps, WHO 2021 severity bars.</Description>
+        <Copyright>Copyright (c) Jakub Syrek</Copyright>
+
         <WindowsPackageType>None</WindowsPackageType>
 
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
