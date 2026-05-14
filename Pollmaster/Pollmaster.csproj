@@ -24,8 +24,8 @@
         <ApplicationId>com.jakubsyrek.pollmaster</ApplicationId>
 
         <!-- Versions -->
-        <Version>1.15.0</Version>
-        <ApplicationDisplayVersion>1.15.0</ApplicationDisplayVersion>
+        <Version>1.16.0</Version>
+        <ApplicationDisplayVersion>1.16.0</ApplicationDisplayVersion>
         <!-- Bumped (was 1) so Android forcibly replaces the previous APK on install,
              flushing stale bundled MauiAsset files. Without this an install over the
              same versionCode can keep the old assets cached in some scenarios. -->
