@@ -27,7 +27,15 @@ public sealed class OverviewService : IOverviewService
     /// <see cref="BuildOverviewsAsync"/> so <see cref="TryGetCurrent"/> can serve
     /// partial results without blocking on the rebuild gate.
     /// </summary>
-    private volatile OverviewPartial? _liveProgress;
+    /// <remarks>
+    /// <b>Static on purpose.</b> <see cref="OverviewService"/> is registered as scoped,
+    /// so each HTTP request gets a fresh instance. The warmup background service runs in
+    /// its own scope; if this field were per-instance, the warmup would publish progress
+    /// onto its instance and the <c>/api/overview/quick</c> endpoint (different scope)
+    /// would always read <c>null</c>. Mirrors the rationale behind the static
+    /// <see cref="RebuildGate"/> — process-wide single-flight needs process-wide state.
+    /// </remarks>
+    private static volatile OverviewPartial? _liveProgress;
 
     /// <summary>
     /// Single-flight gate that ensures only one expensive GIOŚ fan-out is in flight at a
