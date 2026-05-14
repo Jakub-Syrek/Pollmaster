@@ -98,7 +98,22 @@ public static class MauiProgram
 
         services
             .AddOptions<ApiClientOptions>()
-            .Bind(configuration.GetSection(ApiClientOptions.SectionName));
+            .Bind(configuration.GetSection(ApiClientOptions.SectionName))
+            .PostConfigure(opts =>
+            {
+                // Last line of defence. If a stale localhost URL leaked through any
+                // configuration source (legacy bundled file, dev override, manual edit
+                // forgotten before publish), rewrite it back to the production URL.
+                // Production never talks to localhost - the only legitimate use was
+                // dev-run.ps1 with a local backend, which is no longer the default.
+                if (string.IsNullOrWhiteSpace(opts.BaseAddress) ||
+                    opts.BaseAddress.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
+                    opts.BaseAddress.Contains("127.0.0.1") ||
+                    opts.BaseAddress.Contains("10.0.2.2"))
+                {
+                    opts.BaseAddress = ProductionBaseAddress;
+                }
+            });
 
         services.AddHttpClient<IPollmasterApiClient, PollmasterApiClient>((sp, http) =>
         {
