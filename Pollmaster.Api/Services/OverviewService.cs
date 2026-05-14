@@ -117,9 +117,7 @@ public sealed class OverviewService : IOverviewService
         if (persisted is not null && persisted.Value.IsFresh)
         {
             CacheSnapshot(persisted.Value.Stations);
-            _logger.LogInformation(
-                "Disk snapshot still fresh ({Count} stations), skipping warmup rebuild.",
-                persisted.Value.Stations.Count);
+            _logger.WarmupSkippedFresh(persisted.Value.Stations.Count);
             return false;
         }
 
@@ -168,9 +166,7 @@ public sealed class OverviewService : IOverviewService
 
         await PersistAsync(overviews, cancellationToken).ConfigureAwait(false);
 
-        _logger.LogInformation(
-            "Computed overview for {Count} stations (cached for {Ttl}s)",
-            overviews.Count, ttl.TotalSeconds);
+        _logger.OverviewComputed(overviews.Count, ttl.TotalSeconds);
         return Result<IReadOnlyList<StationOverviewDto>>.Success(overviews);
     }
 
@@ -189,7 +185,7 @@ public sealed class OverviewService : IOverviewService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load overview snapshot from disk");
+            _logger.DiskLoadFailed(ex);
             return null;
         }
         if (snapshot is null)
@@ -200,15 +196,11 @@ public sealed class OverviewService : IOverviewService
         var isFresh = age.TotalMinutes <= _persistenceOptions.FreshnessMinutes;
         if (isFresh)
         {
-            _logger.LogInformation(
-                "Serving overview from disk snapshot generated {AgeMinutes:F1} min ago ({Count} stations)",
-                age.TotalMinutes, snapshot.Stations.Count);
+            _logger.DiskSnapshotServed(age.TotalMinutes, snapshot.Stations.Count);
         }
         else
         {
-            _logger.LogInformation(
-                "Serving stale disk snapshot ({AgeMinutes:F1} min old, max {Max} min) — warmup will refresh it.",
-                age.TotalMinutes, _persistenceOptions.FreshnessMinutes);
+            _logger.DiskSnapshotStale(age.TotalMinutes, _persistenceOptions.FreshnessMinutes);
         }
         return new PersistedSnapshot(snapshot.Stations, isFresh);
     }
@@ -227,7 +219,7 @@ public sealed class OverviewService : IOverviewService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to persist overview snapshot to disk");
+            _logger.DiskPersistFailed(ex);
         }
     }
 
@@ -296,7 +288,7 @@ public sealed class OverviewService : IOverviewService
         {
             // Polly circuit-breaker, rate-limit exhaustion or downstream JSON glitches must not
             // tank the whole overview. Surface an empty entry for this station and move on.
-            _logger.LogWarning(ex, "Overview build failed for station {StationId}", station.Id);
+            _logger.OverviewStationFailed(ex, station.Id);
             return _projector.ProjectEmpty(station);
         }
     }
