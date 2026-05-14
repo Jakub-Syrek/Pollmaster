@@ -123,6 +123,28 @@ dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android
                        └─────────────────────┘
 ```
 
+A second, parallel pipeline serves **satellite-assimilated** data for arbitrary points on
+the map:
+
+```
+   ┌───────────────────────────┐        ┌──────────────────────────────┐
+   │ NASA GIBS WMTS (public)   │        │ OpenWeatherMap Air Pollution │
+   │ MODIS AOD, OMI NO₂ tiles  │        │ /data/2.5/air_pollution      │
+   └───────────┬───────────────┘        └──────────────┬───────────────┘
+               │ raster tiles (no auth)                │ JSON (free tier API key)
+               ▼                                       ▼
+       Leaflet TileLayer                   IOwmApiClient → SatellitePollutionService
+       (toggleable overlay)                memory cache (~110 m grid, 10 min TTL)
+                                                       │
+                                                       ▼
+                                       /api/satellite/point?lat=…&lon=…
+```
+
+The frontend overlays GIBS as a translucent raster layer for an at-a-glance regional
+picture; tapping any point on the map fires `/api/satellite/point` for a numeric
+breakdown (PM2.5/PM10/NO₂/SO₂/O3/CO/NH3 + 1–5 AQI) at that exact coordinate, rendered
+in a popup with the same WHO-limit bars that the GIOŚ markers use.
+
 ### Solution layout
 
 ```
@@ -198,6 +220,8 @@ Pollmaster.slnx
 |   GET  | `/api/stations/{id}/snapshot`          | Combined station + index + latest readings        |
 |   GET  | `/api/sensors/{id}/readings`           | Recent measurement series for one sensor          |
 |   GET  | `/api/overview`                        | Lightweight per-station projection (severity, critical pollutant, WHO ratios). Drives marker colours and heatmap layers. |
+|   GET  | `/api/satellite/status`                | Whether the satellite provider is configured.     |
+|   GET  | `/api/satellite/point?lat=&lon=`       | Satellite/model-assimilated air-pollution reading at a point. 503 when no API key is configured. |
 | Dev    | `/openapi/v1.json`                     | OpenAPI document (Development environment only)   |
 
 `/healthz/ready` returns a structured JSON breakdown of every registered `IHealthCheck`,
@@ -247,6 +271,12 @@ options class with `ValidateOnStart`.
     "Directory": "cache",
     "FreshnessMinutes": 30,
     "RetainCount": 5
+  },
+  "OpenWeatherMap": {
+    "BaseAddress": "https://api.openweathermap.org/data/2.5/",
+    "ApiKey": "",
+    "TimeoutSeconds": 10,
+    "CacheTtlSeconds": 600
   }
 }
 ```
@@ -262,6 +292,8 @@ options class with `ValidateOnStart`.
 | `OverviewPersistence.Directory`| string                     | `cache`        | Folder for `overview-<timestamp>.json` files. Relative paths resolve against ContentRoot.   |
 | `OverviewPersistence.FreshnessMinutes` | int                | 30             | Threshold at which the warmup considers the disk snapshot stale and rebuilds it.            |
 | `OverviewPersistence.RetainCount`      | int                | 5              | How many historical snapshots to keep on disk after each save.                              |
+| `OpenWeatherMap.ApiKey`        | string (optional)          | empty          | OpenWeatherMap Air Pollution API key. When empty, `/api/satellite/*` short-circuits with 503 and the map's satellite probe stays inert. Sign up free at openweathermap.org for 1 000 req/day. |
+| `OpenWeatherMap.CacheTtlSeconds` | int                      | 600            | Per-point cache lifetime — coordinates are rounded to ~110 m before hashing so neighbouring taps share the hit. |
 
 ### MAUI client configuration
 
