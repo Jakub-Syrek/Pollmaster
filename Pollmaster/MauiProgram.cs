@@ -15,7 +15,13 @@ namespace Pollmaster;
 public static class MauiProgram
 {
     private const string BaseConfigFileName = "appsettings.json";
+    private const string DevelopmentOverrideFileName = "appsettings.Development.json";
     private const string AndroidOverrideFileName = "appsettings.Android.json";
+
+    // Last-resort default if every bundled JSON fails to open. Production-safe across
+    // every platform - the same URL Railway hosts the backend at, so even a broken
+    // packaging story can't leave the app pointing at localhost.
+    private const string ProductionBaseAddress = "https://pollmaster-production.up.railway.app/";
 
     /// <summary>Create the configured MAUI application.</summary>
     /// <returns>Built <see cref="MauiApp"/> instance.</returns>
@@ -42,8 +48,20 @@ public static class MauiProgram
 
     private static void ConfigureConfiguration(IConfigurationBuilder configuration)
     {
+        // Order of precedence (last one wins):
+        //   1. In-memory defaults    -> Railway production URL.
+        //   2. appsettings.json      -> Railway production URL (matches the default).
+        //   3. appsettings.Development.json (DEBUG only) -> localhost for Windows-dev.
+        //   4. appsettings.Android.json (Android only)   -> Railway in production,
+        //                                                  LAN IP after dev-phone.ps1.
+        // Defaults + base file cover the case where the bundled JSON fails to open at
+        // runtime - the app then still points at Railway rather than collapsing onto
+        // some legacy localhost URL.
         configuration.AddInMemoryCollection(BuildDefaults());
         LoadBundledJson(configuration, BaseConfigFileName);
+#if DEBUG
+        LoadBundledJson(configuration, DevelopmentOverrideFileName);
+#endif
 #if ANDROID
         LoadBundledJson(configuration, AndroidOverrideFileName);
 #endif
@@ -53,21 +71,26 @@ public static class MauiProgram
     {
         return new Dictionary<string, string?>
         {
-            [$"{ApiClientOptions.SectionName}:BaseAddress"] = "https://localhost:7100/",
-            [$"{ApiClientOptions.SectionName}:TimeoutSeconds"] = "30"
+            [$"{ApiClientOptions.SectionName}:BaseAddress"] = ProductionBaseAddress,
+            [$"{ApiClientOptions.SectionName}:TimeoutSeconds"] = "60"
         };
     }
 
     private static void LoadBundledJson(IConfigurationBuilder configuration, string fileName)
     {
+        // Catch *every* exception. Android MAUI assets can throw `Java.IO.FileNotFoundException`
+        // (different namespace, different identity) instead of `System.IO.FileNotFoundException`,
+        // and at least one Release-mode linker setting causes `OpenAppPackageFileAsync` to fail
+        // in ways the .NET-typed catch never sees. Swallowing every failure here is safe because
+        // the in-memory defaults already pin the production URL.
         try
         {
             using var stream = FileSystem.OpenAppPackageFileAsync(fileName).GetAwaiter().GetResult();
             configuration.AddJsonStream(stream);
         }
-        catch (FileNotFoundException)
+        catch
         {
-            // Optional override file; ignore when not bundled.
+            // Optional override file; ignore when not bundled or unreadable.
         }
     }
 
