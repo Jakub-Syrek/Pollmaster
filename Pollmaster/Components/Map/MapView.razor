@@ -11,6 +11,7 @@
 @inject IOfflineOverviewCache OfflineCache
 @inject ILogger<MapView> Logger
 @inject IJSRuntime JS
+@inject Microsoft.Extensions.Options.IOptions<Pollmaster.Configuration.ApiClientOptions> ApiOptions
 
 <div class="map-page">
     <header class="map-page__header">
@@ -117,6 +118,12 @@
 
     private async Task LoadOverviewAsync(CancellationToken cancellationToken)
     {
+        // Surface the resolved BaseAddress everywhere so a misconfigured APK is obvious in
+        // both the UI and adb logcat. Once burned twice shy on the appsettings packaging.
+        var baseAddress = ApiOptions.Value.BaseAddress ?? "(null)";
+        Logger.LogInformation("Pollmaster client BaseAddress: {BaseAddress}", baseAddress);
+        var host = DisplayHost(baseAddress);
+
         // Stage 1 — instant render from the on-device snapshot, if we have one.
         // Lets the user see the map populated within ~50 ms of opening the app,
         // even when the backend is asleep, cold-starting on a free tier, or the
@@ -127,12 +134,12 @@
             var cachedMarkers = offline.Stations.Select(ToMarker).ToArray();
             await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)cachedMarkers);
             var age = DateTime.UtcNow - offline.SavedAt;
-            _status = $"Offline cache: {cachedMarkers.Length} stations · {FormatAge(age)} old · refreshing…";
+            _status = $"Offline cache: {cachedMarkers.Length} stations · {FormatAge(age)} old · refreshing from {host}…";
             StateHasChanged();
         }
         else
         {
-            _status = "Loading overview (first load may take ~60s)…";
+            _status = $"Loading from {host} (first load may take ~60s)…";
             StateHasChanged();
         }
 
@@ -141,8 +148,8 @@
         if (result.IsFailure)
         {
             _status = offline is not null
-                ? $"Offline · backend unreachable ({result.Error}). Showing cached snapshot."
-                : $"Backend error: {result.Error}";
+                ? $"Offline · {host} unreachable ({result.Error}). Showing cached snapshot."
+                : $"Backend error ({host}): {result.Error}";
             StateHasChanged();
             return;
         }
@@ -162,6 +169,20 @@
         if (age.TotalMinutes < 60) return $"{(int)age.TotalMinutes} min";
         if (age.TotalHours < 24) return $"{age.TotalHours:F1} h";
         return $"{(int)age.TotalDays} d";
+    }
+
+    private static string DisplayHost(string baseAddress)
+    {
+        // Strip scheme + trailing slash for compact status-line display.
+        if (string.IsNullOrEmpty(baseAddress) || baseAddress == "(null)")
+        {
+            return "(unset)";
+        }
+        if (Uri.TryCreate(baseAddress, UriKind.Absolute, out var uri))
+        {
+            return uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}";
+        }
+        return baseAddress.Trim('/');
     }
 
     private async Task OnRefreshClickedAsync()
