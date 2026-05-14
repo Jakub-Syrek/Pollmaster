@@ -32,4 +32,9 @@ internal static class CacheKeys
     /// <summary>Cached composite station snapshot.</summary>
     public static string SnapshotForStation(int stationId) =>
         Prefix + "snapshot:" + stationId.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Cached satellite reading for a (rounded) point.</summary>
+    public static string SatelliteForPoint(double latitude, double longitude) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"{Prefix}satellite:{latitude:0.###}:{longitude:0.###}");
 }

@@ -6,6 +6,7 @@ using Pollmaster.Api.Gios.Limits;
 using Pollmaster.Api.Gios.Mapping;
 using Pollmaster.Api.Gios.Throttling;
 using Pollmaster.Api.Health;
+using Pollmaster.Api.Owm;
 using Pollmaster.Api.Persistence;
 using Pollmaster.Api.Services;
 
@@ -43,6 +44,12 @@ builder.Services
     .Bind(builder.Configuration.GetSection(OverviewPersistenceOptions.SectionName))
     .ValidateOnStart();
 
+builder.Services
+    .AddOptions<OwmOptions>()
+    .Bind(builder.Configuration.GetSection(OwmOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddSingleton<IStationMapper, StationMapper>();
 builder.Services.AddSingleton<ISensorMapper, SensorMapper>();
 builder.Services.AddSingleton<IMeasurementMapper, MeasurementMapper>();
@@ -58,6 +65,7 @@ builder.Services.AddScoped<IMeasurementService, MeasurementService>();
 builder.Services.AddScoped<IAirQualityIndexService, AirQualityIndexService>();
 builder.Services.AddScoped<IStationSnapshotService, StationSnapshotService>();
 builder.Services.AddScoped<IOverviewService, OverviewService>();
+builder.Services.AddScoped<ISatellitePollutionService, SatellitePollutionService>();
 
 builder.Services.AddHostedService<OverviewCacheWarmupService>();
 
@@ -91,6 +99,28 @@ builder.Services
 
         options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(20);
         options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(120);
+    });
+
+builder.Services
+    .AddHttpClient<IOwmApiClient, OwmApiClient>((sp, http) =>
+    {
+        var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<OwmOptions>>().Value;
+        http.BaseAddress = new Uri(options.BaseAddress);
+        http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        http.DefaultRequestHeaders.Accept.Clear();
+        http.DefaultRequestHeaders.Accept.Add(new("application/json"));
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pollmaster/1.0 (+https://github.com/Jakub-Syrek/Pollmaster)");
+    })
+    .AddStandardResilienceHandler(options =>
+    {
+        // OWM free tier is generous but per-minute capped; keep retries modest.
+        options.Retry.MaxRetryAttempts = 2;
+        options.Retry.BackoffType = DelayBackoffType.Exponential;
+        options.Retry.UseJitter = true;
+        options.Retry.Delay = TimeSpan.FromMilliseconds(400);
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(10);
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
     });
 
 builder.Services.AddCors(options =>
@@ -127,6 +157,7 @@ app.MapHealthEndpoints();
 app.MapStationEndpoints();
 app.MapSensorEndpoints();
 app.MapOverviewEndpoints();
+app.MapSatelliteEndpoints();
 
 app.Run();
 
