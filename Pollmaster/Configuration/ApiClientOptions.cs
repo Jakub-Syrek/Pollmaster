@@ -15,10 +15,10 @@ public sealed class ApiClientOptions
     /// targets the hosted backend rather than collapsing onto localhost:7100.
     /// Override via appsettings.json or appsettings.Android.json.
     /// </summary>
-    public string BaseAddress { get; init; } = "https://pollmaster-production.up.railway.app/";
+    public string BaseAddress { get; set; } = "https://pollmaster-production.up.railway.app/";
 
     /// <summary>HTTP request timeout in seconds. Defaults to 120 because the cold
     /// <c>/api/overview</c> call can take 60–90 s while the backend warms its snapshot
     /// cache against GIOŚ rate limits.</summary>
-    public int TimeoutSeconds { get; init; } = 120;
+    public int TimeoutSeconds { get; set; } = 120;
 }
