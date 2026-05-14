@@ -15,7 +15,6 @@ namespace Pollmaster;
 public static class MauiProgram
 {
     private const string BaseConfigFileName = "appsettings.json";
-    private const string DevelopmentOverrideFileName = "appsettings.Development.json";
     private const string AndroidOverrideFileName = "appsettings.Android.json";
 
     // Last-resort default if every bundled JSON fails to open. Production-safe across
@@ -49,19 +48,18 @@ public static class MauiProgram
     private static void ConfigureConfiguration(IConfigurationBuilder configuration)
     {
         // Order of precedence (last one wins):
-        //   1. In-memory defaults    -> Railway production URL.
-        //   2. appsettings.json      -> Railway production URL (matches the default).
-        //   3. appsettings.Development.json (DEBUG only) -> localhost for Windows-dev.
-        //   4. appsettings.Android.json (Android only)   -> Railway in production,
-        //                                                  LAN IP after dev-phone.ps1.
-        // Defaults + base file cover the case where the bundled JSON fails to open at
-        // runtime - the app then still points at Railway rather than collapsing onto
-        // some legacy localhost URL.
+        //   1. In-memory defaults     -> Railway production URL (last-resort fallback).
+        //   2. appsettings.json       -> Railway production URL (matches the default).
+        //   3. appsettings.Android.json (Android only) -> Railway in production, or
+        //                                                 LAN IP after dev-phone.ps1.
+        //
+        // No Development override is bundled. Windows MAUI users who want to talk to a
+        // local backend edit appsettings.json before running dev-run.ps1 (we used to ship
+        // a Development override here, but MauiAsset bundled it into Release APKs too,
+        // and the #if DEBUG load gate did not reliably gate it out - so the Android APK
+        // ended up loading localhost:7100 in production).
         configuration.AddInMemoryCollection(BuildDefaults());
         LoadBundledJson(configuration, BaseConfigFileName);
-#if DEBUG
-        LoadBundledJson(configuration, DevelopmentOverrideFileName);
-#endif
 #if ANDROID
         LoadBundledJson(configuration, AndroidOverrideFileName);
 #endif
