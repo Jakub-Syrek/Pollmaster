@@ -45,6 +45,24 @@
         <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
     </PropertyGroup>
 
+    <!-- Release-signed Android builds. All credentials come from environment variables
+         that MUST NOT be committed:
+             POLLMASTER_KEYSTORE_PATH  - path to the .keystore file (lives outside repo,
+                                        default ~/.pollmaster/pollmaster-release.keystore)
+             POLLMASTER_KEYSTORE_PASS  - keystore + key password
+         When either env var is missing the Release build falls back to the debug keystore
+         (i.e. behaves like before this section was added). Keep the keystore file and its
+         password backed up in a password manager - lose them and you can never publish an
+         update under com.jakubsyrek.pollmaster again. -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Release' AND $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' AND '$(POLLMASTER_KEYSTORE_PASS)' != ''">
+        <AndroidKeyStore>true</AndroidKeyStore>
+        <AndroidSigningKeyStore Condition="'$(POLLMASTER_KEYSTORE_PATH)' != ''">$(POLLMASTER_KEYSTORE_PATH)</AndroidSigningKeyStore>
+        <AndroidSigningKeyStore Condition="'$(POLLMASTER_KEYSTORE_PATH)' == ''">$(USERPROFILE)\.pollmaster\pollmaster-release.keystore</AndroidSigningKeyStore>
+        <AndroidSigningKeyAlias>pollmaster</AndroidSigningKeyAlias>
+        <AndroidSigningStorePass>$(POLLMASTER_KEYSTORE_PASS)</AndroidSigningStorePass>
+        <AndroidSigningKeyPass>$(POLLMASTER_KEYSTORE_PASS)</AndroidSigningKeyPass>
+    </PropertyGroup>
+
     <ItemGroup>
         <!-- App Icon -->
         <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#1976D2" />
