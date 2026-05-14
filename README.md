@@ -5,86 +5,61 @@
 [![.NET](https://img.shields.io/badge/.NET-10.0-blue)](https://dotnet.microsoft.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Polish air-quality visualization. Pollmaster pulls live pollutant measurements and the national
-air-quality index from the GIOŚ public API, hides the upstream Polish JSON-LD shape behind clean
-English contracts, and renders every monitoring station on an interactive Leaflet map. Stations
-are coloured by their worst pollutant against the WHO 2021 short-term guidelines, popups carry
-mini bars per pollutant, and a per-pollutant heatmap layer can be switched on top of the markers.
+Polish air-quality visualization. Pollmaster pulls live pollutant measurements and the
+national air-quality index from the GIOŚ public API, hides the upstream Polish JSON-LD
+shape behind clean English contracts, persists a per-station snapshot to disk, and
+renders every monitoring station on a Leaflet map. Marker colours come from the
+station's worst pollutant against the WHO 2021 short-term guidelines; per-pollutant
+heatmap layers and a stale-while-revalidate cache keep the UI responsive even when the
+GIOŚ rate limits push the upstream fetch into the minutes range.
 
-## Quick Start
+---
 
-The repository ships two PowerShell scripts that wrap the full developer loop. Use them — they
-kill stale processes that hold file locks, clean every `bin/` and `obj/`, build the projects in
-the right order, and start the backend in its own console window so logs stay readable.
+## Table of contents
 
-### Run on Windows
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [API surface](#api-surface)
+- [Configuration](#configuration)
+- [Operations runbook](#operations-runbook)
+- [Performance characteristics](#performance-characteristics)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+- [Versioning](#versioning)
+- [Roadmap](#roadmap)
+
+---
+
+## Quick start
+
+### Run everything from one PowerShell window (Windows)
 
 ```powershell
-.\dev-run.ps1                                    # Debug, https profile, MAUI Windows
+.\dev-run.ps1                                     # Debug + https profile, MAUI WinUI client
 .\dev-run.ps1 -Configuration Release -BackendProfile lan
 ```
 
-Two windows open: backend on `https://localhost:7100/` (or `http://localhost:5100/`) and the MAUI
-WinUI client as a native window.
+Two windows open: the backend (logs streaming in a dedicated PowerShell console) and
+the MAUI WinUI client (native window).
 
-### Run on a Physical Android Phone
-
-```powershell
-.\dev-phone.ps1                                  # USB or already-paired wireless
-.\dev-phone.ps1 -PreferredIp 192.168.1.42 -Configuration Release
-.\dev-phone.ps1 -SkipBackend                     # backend already running
-.\dev-phone.ps1 -SkipConfig                      # leave appsettings.Android.json alone
-```
-
-After the very first pair the script auto-discovers a previously paired phone over
-mDNS (`adb mdns services`) and reconnects on its own, so day-to-day you usually just
-run `.\dev-phone.ps1` with no flags — the script will pick up the phone as soon as
-Wireless debugging is on.
-
-What the script does on every run:
-
-1. Kills lingering `Pollmaster*`, `MSBuild`, `dotnet` and `cmd` processes that hold file locks.
-2. Removes every `bin/` and `obj/` under the repo.
-3. Detects the PC's RFC 1918 LAN IPv4 (ignores Hyper-V virtual switches) and writes it into
-   `Pollmaster/Resources/Raw/appsettings.Android.json`.
-4. Resolves `adb` from `PATH` or the standard Android SDK directories, warms its daemon and
-   optionally pairs / connects over Wi-Fi.
-5. Asserts that at least one device is in `device` state.
-6. Builds `Pollmaster.Api`, launches it in a new PowerShell window with the `lan` profile
-   (`http://0.0.0.0:5100`).
-7. Builds the MAUI Android target and pushes it to the phone via `dotnet build -t:Run`.
-
-#### Wireless debugging (Android 11+, no USB needed)
-
-On the phone: *Developer Options → Wireless debugging → ON*. Pick *Pair device with pairing
-code* — the screen shows a `<ip>:<port>` target and a six-digit code. Run the pairing once:
+### Deploy to a physical Android phone
 
 ```powershell
-.\dev-phone.ps1 -PairWith 192.168.0.123:41123 -PairCode 654321
+.\dev-phone.ps1                                   # auto-detects LAN IP, USB or paired wireless
+.\dev-phone.ps1 -Connect 192.168.0.88:40149       # explicit wireless target
+.\dev-phone.ps1 -PairWith 192.168.0.88:41123 -PairCode 123456   # first-time wireless pairing
+.\dev-phone.ps1 -SkipBackend                      # backend already running on the LAN
 ```
 
-After the first successful pair the phone remembers this PC. For every later run just pass the
-**main** wireless IP/port shown on the Wireless debugging screen (a different, persistent port
-from the pairing port):
+The script kills lingering build / runtime processes, wipes every `bin/` and `obj/`,
+detects the PC's RFC 1918 IPv4 and rewrites `Pollmaster/Resources/Raw/appsettings.Android.json`
+so the client points at the right backend, resolves `adb` from `PATH` or the standard
+Android SDK locations, optionally pairs / auto-discovers via mDNS, builds backend and
+MAUI, then launches both. See [Troubleshooting](#troubleshooting) for Wireless
+debugging quirks (rotating ports, doze).
 
-```powershell
-.\dev-phone.ps1 -Connect 192.168.0.123:5555
-```
-
-You can combine `-PairWith` / `-PairCode` / `-Connect` in one invocation on the very first run.
-
-#### USB debugging (older Androids or first-time setup)
-
-- *Settings → About phone → Build number* → tap 7× to unlock Developer Options.
-- *Developer Options → USB debugging* → ON.
-- Plug the phone in and confirm the RSA fingerprint prompt.
-
-On the first backend launch, Windows Firewall will ask — allow **private network** access.
-
-Sanity check from the phone's browser: `http://<PC-IP>:5100/healthz` must return
-`{"status":"ok"}`.
-
-### Manual flow (no scripts)
+### Manual workflow
 
 ```powershell
 # Backend
@@ -94,154 +69,128 @@ dotnet run --project Pollmaster.Api --launch-profile https
 dotnet build Pollmaster\Pollmaster.csproj -f net10.0-windows10.0.19041.0
 dotnet run --project Pollmaster --framework net10.0-windows10.0.19041.0
 
-# MAUI Android — needs LAN backend (-launch-profile lan) and adb-connected device
+# MAUI Android — needs LAN backend (--launch-profile lan) and adb-connected device
 dotnet build Pollmaster\Pollmaster.csproj -t:Run -f net10.0-android
 ```
 
-## Features
+---
 
-### Capture
-- **Screenshot** button on the map renders the visible area (map + markers + popups +
-  heatmap) through `html2canvas` and hands the PNG to the platform share sheet.
-- **Record / Stop recording** buttons drive a 4 fps html2canvas snapshot loop fed into
-  a `MediaRecorder` WebM stream; the resulting clip is saved to the app's private
-  storage and shared via the platform sheet. No extra Android permissions needed —
-  the file lives under `FileSystem.AppDataDirectory/captures/`.
+## Architecture
 
-### Map UI
-- All ~290 Polish GIOŚ stations on a single Leaflet map
-- Markers coloured by **WHO-based severity** (highest pollutant ratio across the station's
-  sensors) rather than the often-null upstream AQ index — every station that has any reading
-  gets a meaningful colour
-- Severe stations (Bad / Very bad) **pulse** with a coloured halo so they stand out at country
-  zoom
-- **Heatmap layers** for PM10, PM2.5, NO₂, SO₂ and O₃ via Leaflet.heat with a WHO-aligned
-  green → red gradient
-- Top-right **layer switcher** to toggle between markers and per-pollutant heatmaps
-- Popups carry per-pollutant horizontal bars scaled against the WHO 2021 short-term guideline
-  values (green ≤ 50 %, amber ≤ 100 %, red above); sensors with no current reading are kept
-  in the list but visually de-emphasised
+```
+                       ┌────────────────────────┐
+                       │   GIOŚ public REST     │
+                       │ api.gios.gov.pl /v1/   │
+                       └──────────┬─────────────┘
+                                  │
+                  ┌───────────────┴────────────────┐
+                  │  GiosRateLimitHandler          │  sliding window 30 req / 10 s
+                  │  (DelegatingHandler)           │
+                  └───────────────┬────────────────┘
+                                  │
+                  ┌───────────────┴────────────────┐
+                  │  Microsoft.Extensions.Http     │  retry + circuit breaker + timeouts
+                  │  .Resilience standard handler  │
+                  └───────────────┬────────────────┘
+                                  │
+                  ┌───────────────┴────────────────┐
+                  │  IGiosApiClient (typed)        │  Polish JSON-LD adapter
+                  └───────────────┬────────────────┘
+                                  │
+        ┌───────────┬─────────────┼──────────────┬──────────────┐
+        ▼           ▼             ▼              ▼              ▼
+   StationSvc  SensorSvc  MeasurementSvc  AqIndexSvc   StationSnapshotSvc
+        │           │             │              │              │  facade
+        └───────────┴─────────────┴──────────────┴──────────────┘
+                                  │
+                  ┌───────────────┴────────────────┐
+                  │  OverviewService               │  single-flight gate (Semaphore)
+                  │  + OverviewProjector           │  Strategy (WHO ratios)
+                  └───────────────┬────────────────┘
+                                  │
+                  ┌───────────────┴────────────────┐
+                  │  Stale-while-revalidate cache  │
+                  │  IMemoryCache → FileSnapshot   │
+                  └───────────────┬────────────────┘
+                                  │
+                  ┌───────────────┴────────────────┐
+                  │  /api/overview  /api/stations  │  CORS + OpenAPI
+                  └───────────────┬────────────────┘
+                                  │
+                       ┌──────────┴──────────┐
+                       │   Pollmaster MAUI   │  Blazor Hybrid + Leaflet.js
+                       │   Windows + Android │
+                       └─────────────────────┘
+```
 
-### Backend
-- Adapter-pattern mappers translating Polish-named JSON-LD payloads to clean English contracts
-- Per-resource memory cache with TTLs tuned to the GIOŚ rate limits (60 min stations, 30 min
-  sensors, 5 min readings / index / snapshot)
-- Per-station dedupe by pollutant code, so the duplicate "auto PM10 + manual lab PM10" rows
-  collapse to one fresh reading
-- WHO 2021 guideline lookup (`IWhoLimitProvider`) and six-bucket severity calculator
-  (`ISeverityCalculator`) drive both the map markers and the heatmap intensity
-- **Outbound rate limiter** (sliding window, 30 req per 10 s) plus a tolerant `Microsoft.
-  Extensions.Http.Resilience` standard handler — no more 429 storms or circuit-breaker
-  cascades on the overview fan-out
-- `Result<T>` pattern at every service boundary instead of exceptions for expected failures
-- Full DI throughout (services, mappers, options, HTTP clients, delegating handlers)
-
-### Other
-- OpenAPI document in Development at `/openapi/v1.json`
-- Liveness endpoint at `/healthz`
-- CORS policy driven by `Cors:AllowedOrigins`
-
-## Architectural Strengths
-
-### Design patterns
-
-- **Adapter** — `Pollmaster.Api.Gios.Mapping.*` translates the upstream Polish JSON-LD DTOs
-  to `Pollmaster.Shared.Contracts`, so nothing outside the gateway layer knows about
-  `"Lista stacji pomiarowych"` and the `WGS84 φ N` field name.
-- **Gateway** — `IGiosApiClient` owns HTTP and JSON. Two delegating handlers wrap it:
-  `GiosRateLimitHandler` (process-wide `SlidingWindowRateLimiter` shared via the singleton
-  `GiosRateLimiter`) and `Microsoft.Extensions.Http.Resilience` (retry, circuit breaker,
-  attempt + total timeouts).
-- **Facade** — `StationSnapshotService` composes station + sensors + readings + index into
-  a single `StationSnapshotDto` used by both the popup and the overview pipeline.
-- **Strategy** — pluggable rules behind interfaces: `IWhoLimitProvider` (the WHO 2021
-  guideline table), `ISeverityCalculator` (ratio → six-step palette bucket),
-  `IOverviewProjector` (snapshot → overview).
-- **Single-flight gate** — `OverviewService` serialises the expensive ~290-station GIOŚ
-  fan-out behind a static `SemaphoreSlim`. Concurrent callers re-check the cache after
-  the gate releases, so only one rebuild runs even under heavy concurrency.
-- **Cache hierarchy** — every request falls through:
-  in-memory `IMemoryCache` → `FileOverviewSnapshotStore` (disk) → GIOŚ fan-out. The
-  background `OverviewCacheWarmupService` keeps both layers warm.
-- **Background service** — `OverviewCacheWarmupService` (hosted) calls
-  `IOverviewService.RefreshIfStaleAsync` every 30 minutes; it consults the disk snapshot
-  first and skips the GIOŚ pull when the file is still fresh.
-
-### SOLID
-
-- **Single responsibility** — `OverviewService` owns caching and concurrency only; the
-  pure projection logic (severity, critical pollutant, ratio computation) lives in
-  `OverviewProjector`. Gateways, mappers, services, projectors and stores are all
-  separate types.
-- **Open / closed** — `ISeverityCalculator`, `IWhoLimitProvider` and `IOverviewProjector`
-  let you swap rule tables (e.g. EEA index instead of WHO) without touching the
-  orchestration code.
-- **Liskov** — the test suite substitutes `WhoLimitProvider` / `WhoSeverityCalculator`
-  directly into `OverviewProjector` and verifies behaviour without mocks.
-- **Interface segregation** — small focused interfaces (`IGiosApiClient`,
-  `IOverviewSnapshotStore`, `ISeverityCalculator`, `IOverviewProjector`,
-  `IPollmasterApiClient`).
-- **Dependency inversion** — `Microsoft.Extensions.DependencyInjection` everywhere;
-  HTTP clients via `IHttpClientFactory`, never `new HttpClient()`.
-
-### Performance & robustness
-
-- **Source-generated JSON** — `OverviewJsonContext : JsonSerializerContext` removes
-  reflection from the disk snapshot serialise / deserialise hot path used by the warmup
-  every 30 minutes.
-- **`Parallel.ForEachAsync` + `ConcurrentBag`** in the overview fan-out replaces the
-  manual `SemaphoreSlim` + `Task.WhenAll` allocation path with a single bounded loop
-  (`MaxDegreeOfParallelism = 3`).
-- **Outbound rate limiter** — sliding-window 30 req / 10 s budget shared across all
-  HTTP pipelines, well under the GIOŚ documented limits.
-- **HTTP 400 = no-data** — the gateway treats 400 from `/data/getData` as "retired
-  sensor", caches an empty result, and stops the rate-limit storm that used to fire on
-  every overview rebuild.
-- **`Result<T>` discriminated union** — expected failures travel as values, exceptions
-  are reserved for genuine bugs. The gateway also catches *every* HTTP-side error
-  (including Polly `BrokenCircuitException`) so one bad station never tanks the whole
-  fan-out.
-- **Centralised cache vocabulary** — every cache key is one `CacheKeys` constant or
-  factory method, no drift between services.
-- **Strongly-typed options** — `GiosOptions`, `CorsOptions`, `ApiClientOptions`,
-  `OverviewWarmupOptions`, `OverviewPersistenceOptions`, all bound with
-  `ValidateOnStart`.
-
-## Feature Matrix
-
-| Capability                                  | Backend | MAUI client |
-| ------------------------------------------- | :-----: | :---------: |
-| Station directory                           |   ✅    |     ✅      |
-| Per-station sensors                         |   ✅    |     ✅      |
-| Air-quality index                           |   ✅    |     ✅      |
-| Per-sensor measurement series               |   ✅    |     —       |
-| Composite station snapshot                  |   ✅    |     ✅      |
-| Per-station overview (severity + ratios)    |   ✅    |     ✅      |
-| WHO-based severity bucket                   |   ✅    |     ✅      |
-| Pollutant heatmap layers                    |   —     |     ✅      |
-| Pulsing markers for severe stations         |   —     |     ✅      |
-| In-memory cache w/ tuned TTLs               |   ✅    |     —       |
-| Outbound rate limiter (sliding window)      |   ✅    |     —       |
-| Standard resilience (retry + circuit + jit) |   ✅    |     ✅      |
-| OpenAPI / Swagger                           |   ✅    |     —       |
-
-## Project Layout
+### Solution layout
 
 ```
 Pollmaster.slnx
 ├── Pollmaster.Shared\        Class library — API contracts shared between client and backend
 ├── Pollmaster.Api\           ASP.NET Core 10 backend (GIOŚ proxy + cache + REST API)
-├── Pollmaster.Api.Tests\     xUnit tests (mappers, severity, dedupe, Result<T>, WHO limits)
+├── Pollmaster.Api.Tests\     xUnit tests (mappers, severity, projector, dedupe, snapshot store)
 ├── Pollmaster\               .NET MAUI Blazor Hybrid client (Leaflet map UI)
 ├── dev-run.ps1               Windows dev loop (kill / clean / build / run backend + MAUI)
-└── dev-phone.ps1             Android phone dev loop (auto IP + adb deploy)
+└── dev-phone.ps1             Android phone dev loop (mDNS auto-connect + adb deploy)
 ```
 
-## API Endpoints
+### Design patterns at a glance
+
+| Pattern                  | Where                                                                   | Why                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Adapter                  | `Pollmaster.Api.Gios.Mapping.*`                                         | Translate Polish JSON-LD to English `Pollmaster.Shared.Contracts`                    |
+| Gateway                  | `IGiosApiClient` + `GiosApiClient`                                      | Isolate HTTP / JSON details from business logic                                      |
+| Facade                   | `StationSnapshotService`                                                | Compose station + sensors + index + readings behind one call                         |
+| Strategy                 | `IWhoLimitProvider`, `ISeverityCalculator`, `IOverviewProjector`        | Swappable rule tables / projection                                                   |
+| Single-flight gate       | `OverviewService` static `SemaphoreSlim`                                | Only one GIOŚ fan-out at a time, even under concurrent calls                         |
+| Stale-while-revalidate   | `OverviewService.GetOverviewAsync` + `RefreshIfStaleAsync`              | Always serve cached data; refresh in the background                                  |
+| Background service       | `OverviewCacheWarmupService`                                            | Hosted `BackgroundService` that warms the cache every 30 min                         |
+| Composite cache          | Memory → disk → GIOŚ rebuild                                            | Each layer is independently testable; cold start uses disk, warm start uses memory   |
+| Delegating handler chain | `GiosRateLimitHandler` → resilience handler                             | Cross-cutting concerns (throttling, retry, circuit breaker) decorate the HTTP client |
+| Discriminated union      | `Result<T>` in `Pollmaster.Shared.Common`                               | Expected failures travel as values, exceptions are reserved for genuine bugs         |
+
+### SOLID notes
+
+- **SRP** — `OverviewService` owns caching and concurrency; the pure projection lives in
+  `OverviewProjector`. Mappers, services, gateways and stores are all separate types.
+- **OCP** — `ISeverityCalculator`, `IWhoLimitProvider`, `IOverviewProjector` let you swap
+  rule tables (EEA index, different thresholds, alternative ratios) without touching
+  the orchestration.
+- **LSP** — tests substitute concrete `WhoLimitProvider` / `WhoSeverityCalculator` into
+  `OverviewProjector` and assert behaviour without mocks.
+- **ISP** — `IGiosApiClient`, `IOverviewSnapshotStore`, `IOverviewProjector`,
+  `IPollmasterApiClient`, `IMediaCaptureService` — each interface is tightly scoped.
+- **DIP** — `Microsoft.Extensions.DependencyInjection` everywhere. HTTP clients via
+  `IHttpClientFactory`; cache via `IMemoryCache`; logging via source-generated
+  `LoggerMessage` extensions (`OverviewServiceLog`).
+
+### Performance details
+
+- **`FrozenDictionary`** in `WhoLimitProvider` — built once at type init, faster lookups
+  on the hot path of every projection.
+- **`Parallel.ForEachAsync` + `ConcurrentBag`** for the station fan-out — bounded
+  concurrency (3) without the manual `SemaphoreSlim` + `Task.WhenAll` allocation path.
+- **`LoggerMessage` source-gen** (`OverviewServiceLog`) — every overview hot-path log
+  call has a static event id and zero-allocation argument formatting unless the level
+  is enabled.
+- **Outbound rate limiter** — `SlidingWindowRateLimiter` shared across HTTP pipelines
+  via the singleton `GiosRateLimiter`, well under the GIOŚ documented limits.
+- **HTTP 400 ≡ no-data** — the gateway treats 400 from `/data/getData` as "retired
+  sensor", caches an empty result, and stops the rate-limit storm.
+- **Single-flight gate** — concurrent overview requests do not pile up duplicate
+  GIOŚ fan-outs; later callers see the freshly-populated cache after the gate releases.
+- **Disk snapshot survives restarts** — `cache/overview-<timestamp>.json` preserves the
+  last computed overview, served immediately on backend boot (stale-while-revalidate).
+
+---
+
+## API surface
 
 | Method | Route                                  | Description                                       |
 | -----: | -------------------------------------- | ------------------------------------------------- |
-|   GET  | `/healthz`                             | Liveness probe                                    |
+|   GET  | `/healthz`                             | Liveness — always 200 OK while the process is up  |
+|   GET  | `/healthz/ready`                       | Readiness — JSON with per-check status            |
 |   GET  | `/api/stations`                        | All GIOŚ stations                                 |
 |   GET  | `/api/stations/{id}`                   | Single station                                    |
 |   GET  | `/api/stations/{id}/sensors`           | Sensors at the station                            |
@@ -249,12 +198,29 @@ Pollmaster.slnx
 |   GET  | `/api/stations/{id}/snapshot`          | Combined station + index + latest readings        |
 |   GET  | `/api/sensors/{id}/readings`           | Recent measurement series for one sensor          |
 |   GET  | `/api/overview`                        | Lightweight per-station projection (severity, critical pollutant, WHO ratios). Drives marker colours and heatmap layers. |
+| Dev    | `/openapi/v1.json`                     | OpenAPI document (Development environment only)   |
 
-In Development the OpenAPI document is exposed at `/openapi/v1.json`.
+`/healthz/ready` returns a structured JSON breakdown of every registered `IHealthCheck`,
+suitable for Kubernetes / Docker / Azure App Service readiness probes:
+
+```json
+{
+  "status": "Healthy",
+  "totalDurationMs": 12.4,
+  "entries": {
+    "overview-cache": { "status": "Healthy", "description": "Overview in memory (287 stations).", "durationMs": 0.5, "data": { "stations": 287, "source": "memory" } },
+    "gios-reachability": { "status": "Healthy", "description": "GIOŚ reachable (200).", "durationMs": 89.2, "data": {} }
+  }
+}
+```
+
+---
 
 ## Configuration
 
-### Backend (`Pollmaster.Api/appsettings.json`)
+All settings live in `Pollmaster.Api/appsettings.json` (or environment-specific
+overrides like `appsettings.Production.json`). Every section binds to a strongly-typed
+options class with `ValidateOnStart`.
 
 ```json
 {
@@ -262,59 +228,349 @@ In Development the OpenAPI document is exposed at `/openapi/v1.json`.
     "BaseAddress": "https://api.gios.gov.pl/",
     "TimeoutSeconds": 30,
     "Cache": {
-      "StationsTtlMinutes": 60,
-      "SensorsTtlMinutes": 30,
-      "IndexTtlSeconds": 300,
-      "MeasurementsTtlSeconds": 300,
-      "SnapshotTtlSeconds": 300
+      "StationsTtlMinutes": 120,
+      "SensorsTtlMinutes": 60,
+      "IndexTtlSeconds": 1800,
+      "MeasurementsTtlSeconds": 1800,
+      "SnapshotTtlSeconds": 1800
     }
   },
   "Cors": {
     "AllowedOrigins": [ "*" ]
+  },
+  "Warmup": {
+    "Enabled": true,
+    "InitialDelaySeconds": 5,
+    "IntervalSeconds": 1800
+  },
+  "OverviewPersistence": {
+    "Directory": "cache",
+    "FreshnessMinutes": 30,
+    "RetainCount": 5
   }
 }
 ```
 
-The outbound `GiosRateLimitHandler` is a sliding-window limiter (30 req per 10 s by default)
-constructed in `Program.cs`. The standard resilience handler is tuned for the GIOŚ throttling
-profile (`CircuitBreaker.MinimumThroughput = 200`, `FailureRatio = 0.9`,
-`BreakDuration = 15 s`, exponential retry with jitter).
+| Section                        | Knob                       | Default        | What it does                                                                                |
+| ------------------------------ | -------------------------- | -------------: | ------------------------------------------------------------------------------------------- |
+| `Gios.BaseAddress`             | string                     | `…gios.gov.pl` | Upstream GIOŚ base URL. Replace for a mock or proxy.                                        |
+| `Gios.TimeoutSeconds`          | int                        | 30             | Per-request HttpClient timeout.                                                              |
+| `Gios.Cache.*`                 | int                        | varies         | Per-resource memory cache TTL. Bumped well over warmup interval so the cache stays hot.     |
+| `Cors.AllowedOrigins`          | string[]                   | `["*"]`        | CORS origins for the MAUI client. Restrict in production.                                   |
+| `Warmup.Enabled`               | bool                       | true           | Master switch for the background cache warmer.                                              |
+| `Warmup.IntervalSeconds`       | int                        | 1800           | Rebuild cadence. Default matches GIOŚ hourly refresh.                                       |
+| `OverviewPersistence.Directory`| string                     | `cache`        | Folder for `overview-<timestamp>.json` files. Relative paths resolve against ContentRoot.   |
+| `OverviewPersistence.FreshnessMinutes` | int                | 30             | Threshold at which the warmup considers the disk snapshot stale and rebuilds it.            |
+| `OverviewPersistence.RetainCount`      | int                | 5              | How many historical snapshots to keep on disk after each save.                              |
 
-### MAUI client (`Pollmaster/Resources/Raw/appsettings.json` + `appsettings.Android.json`)
+### MAUI client configuration
+
+`Pollmaster/Resources/Raw/appsettings.json` (and `appsettings.Android.json` override):
 
 ```json
 {
   "PollmasterApi": {
     "BaseAddress": "https://localhost:7100/",
-    "TimeoutSeconds": 30
+    "TimeoutSeconds": 120
   }
 }
 ```
 
-The Android override defaults to `http://10.0.2.2:5100/` (Android emulator alias for the host
-loopback). For a physical phone, set it to the PC's LAN IP — `dev-phone.ps1` does this for you.
+Android emulator defaults to `http://10.0.2.2:5100/` (host loopback alias). A physical
+phone needs the PC's LAN IP — `dev-phone.ps1` rewrites this automatically.
+
+---
+
+## Operations runbook
+
+### Logs
+
+Structured logs go to `Microsoft.Extensions.Logging`. In Development the console sink
+is the default. Notable event ids (defined in
+`Pollmaster.Api.Services.OverviewServiceLog`):
+
+| Event id | Level   | Meaning                                                     |
+| -------: | ------- | ----------------------------------------------------------- |
+| 1001     | Info    | Overview rebuilt — payload size and applied TTL             |
+| 1002     | Info    | Disk snapshot served (fresh)                                |
+| 1003     | Info    | Stale-but-served disk snapshot — warmup will refresh        |
+| 1004     | Info    | Warmup skipped — existing snapshot already fresh            |
+| 1005     | Warning | Per-station build failed — empty entry surfaced for that id |
+| 1006     | Warning | Disk snapshot load failed                                   |
+| 1007     | Warning | Disk snapshot persist failed                                |
+
+### Cache state
+
+Read it at any time via `/healthz/ready`. Watch the `overview-cache` entry — a
+`Degraded` state usually means the disk snapshot is stale and the warmup is still
+running. An `Unhealthy` state means the file does not exist on disk at all and the
+warmup has not produced one (cold start, or persistent failure to fetch).
+
+### Cache files
+
+`Pollmaster.Api/cache/overview-yyyyMMddTHHmmssfffZ.json`. Safe to inspect, copy, or
+delete — the next warmup rebuilds. Retention defaults to 5 newest files.
+
+### Force a rebuild
+
+```powershell
+# delete the freshest snapshot — next request rebuilds
+Remove-Item Pollmaster.Api\cache\overview-*.json
+```
+
+Or kill the backend and restart — the warmup tick (after `InitialDelaySeconds`) will
+rebuild if `RefreshIfStaleAsync` decides the disk copy is too old.
+
+### Capture network errors
+
+```powershell
+# Watch all GIOŚ outbound traffic in the backend window
+$env:Logging__LogLevel__System.Net.Http.HttpClient = "Information"
+dotnet run --project Pollmaster.Api --launch-profile lan
+```
+
+The `IGiosApiClient` chain logs every outgoing request, the Polly attempt, and the
+final response. Look for repeated `400` against `/data/getData/{id}` — that is GIOŚ
+flagging retired sensors and the gateway will cache them as no-data.
+
+---
+
+## Performance characteristics
+
+| Scenario                                        | Latency                    |
+| ----------------------------------------------- | -------------------------- |
+| `/api/overview` — memory cache hit              | < 5 ms                     |
+| `/api/overview` — disk cache hit (cold restart) | 60–150 ms                  |
+| `/api/overview` — full rebuild (cold cache)     | 5–7 min                    |
+| Station popup (renders from JS overview state)  | < 5 ms, no backend call    |
+| `/healthz`                                      | < 1 ms                     |
+| `/healthz/ready`                                | 50–200 ms (GIOŚ probe)     |
+| Warmup cycle (every 30 min, cache fresh)        | < 10 ms (just disk check)  |
+| Warmup cycle (cache stale, full rebuild)        | 5–7 min                    |
+
+The single-flight gate guarantees that concurrent first-load requests do **not**
+multiply the cold-cache latency — only one rebuild ever runs.
+
+GIOŚ rate limits (documented by the provider):
+- `/data/getData/*` — 2 req/min (archive) or 1500 req/min (current data)
+- `/aqindex/getIndex/*` — 1500 req/min
+- `/station/sensors/*` — 1500 req/min
+- `/station/findAll` — 2 and 1500 req/min depending on endpoint
+
+The outbound `GiosRateLimitHandler` is conservatively configured at 30 req / 10 s
+(180 req/min), comfortably under the lower envelope.
+
+---
 
 ## Testing
 
 ```powershell
-dotnet test
+dotnet test                                       # runs every test project in the solution
+dotnet test --logger "console;verbosity=detailed" # verbose output
+dotnet test /p:CollectCoverage=true               # generate coverage data
 ```
 
-Coverage includes `StationMapper`, `SensorMapper`, `MeasurementMapper`, `AirQualityIndexMapper`,
-the snapshot deduplication helper, `WhoLimitProvider`, `WhoSeverityCalculator`, and the
-`Result<T>` discriminated union.
+The xUnit suite (`Pollmaster.Api.Tests`) covers:
 
-## Versioning
+- **Mappers** — `StationMapperTests`, `MeasurementMapperTests`, `AirQualityIndexMapperTests`,
+  `SensorMapperTests`. Verify the Polish-to-English translation, the timestamp parsing,
+  and the JSON-LD field-name quirks of GIOŚ.
+- **WHO + severity** — `WhoLimitProviderTests` (case-insensitive lookup, unknown
+  returns null), `WhoSeverityCalculatorTests` (parameterised over each bucket of the
+  six-step palette).
+- **Projector** — `OverviewProjectorTests` (empty input, official-vs-derived severity,
+  worst-ratio selection, pollutants without values).
+- **Snapshot dedupe** — `SnapshotDeduplicationTests` (freshness preference per pollutant
+  code, ordering of empty readings, multiple sensors per pollutant).
+- **Result&lt;T&gt;** — `ResultTests` (success / failure invariants, access semantics).
+- **Disk snapshot store** — `FileOverviewSnapshotStoreTests` (round-trip, retention,
+  prune behaviour) using a temp directory.
 
-Pollmaster follows [Semantic Versioning](https://semver.org). Version bumps happen automatically
-on `main` via the `version.yml` GitHub Actions workflow, driven by
-[Conventional Commits](https://www.conventionalcommits.org).
+### Coverage
+
+> Minimum 80 % on new code, 100 % on critical paths (per the project's `MEMORY.md`
+> development directives). Run `dotnet test /p:CollectCoverage=true` to generate the
+> `coverage.cobertura.xml` baseline; pair with
+> [`reportgenerator`](https://reportgenerator.io/) for HTML reports.
+
+### What the tests do **not** cover
+
+- End-to-end against the real GIOŚ API. The gateway is intentionally not exercised
+  against the live service in unit tests; the OpenAPI document is the only contract.
+- MAUI UI smoke tests. The MAUI client is verified manually via `dev-run.ps1` (Windows)
+  and `dev-phone.ps1` (Android). For automated UI testing add an Appium / Maui.UITest
+  project — not present yet.
+
+### CI
+
+Pull requests trigger `.github/workflows/tests.yml`:
+
+1. `test` job — restore Shared / Api / Tests, build Release, run `dotnet test`.
+2. `code-quality` job — single-author check (must be `Jakub Syrek <…>`), rejects any
+   commit message carrying an AI co-author line.
+
+Both must pass before merge.
+
+---
+
+## Deployment
+
+### Backend — bare metal / VM
+
+```powershell
+dotnet publish Pollmaster.Api -c Release -o publish/ --self-contained false
+```
+
+Copy `publish/` to the target host. Run as a Windows Service (`sc.exe create`) or a
+Linux systemd unit. Reverse-proxy with Nginx / IIS for TLS termination — Pollmaster.Api
+itself only serves HTTP in production unless you bind a certificate explicitly.
+
+Mandatory production settings:
+
+- `Cors:AllowedOrigins` restricted to known clients (`https://your.app`) — never `*`.
+- `Warmup:Enabled` = `true` so cold-start latency lands on the warmup, not the user.
+- Persist `OverviewPersistence:Directory` somewhere durable (e.g. `/var/lib/pollmaster/cache/`).
+
+### Backend — Docker
+
+```Dockerfile
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY . .
+RUN dotnet publish Pollmaster.Api -c Release -o /app/publish --no-self-contained
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+COPY --from=build /app/publish .
+VOLUME ["/app/cache"]
+ENV ASPNETCORE_URLS=http://+:5100
+ENV OverviewPersistence__Directory=/app/cache
+EXPOSE 5100
+ENTRYPOINT ["dotnet", "Pollmaster.Api.dll"]
+```
+
+```powershell
+docker build -t pollmaster-api .
+docker run -d --name pollmaster -p 5100:5100 -v pollmaster-cache:/app/cache pollmaster-api
+```
+
+The `/app/cache` volume preserves the disk snapshot across container restarts — first
+hit after `docker restart` serves the persisted file immediately instead of re-fetching
+the entire overview.
+
+### Backend — Kubernetes probes
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 5100
+  initialDelaySeconds: 10
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /healthz/ready
+    port: 5100
+  initialDelaySeconds: 15
+  periodSeconds: 30
+```
+
+The readiness probe returns `Degraded` (HTTP 200) when the disk snapshot is stale —
+configure your platform to treat that as "send traffic, but flag in monitoring".
+
+### MAUI client distribution
+
+| Target            | Command                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| Windows MSIX      | `dotnet publish Pollmaster -f net10.0-windows10.0.19041.0 -c Release -p:WindowsPackageType=MSIX` |
+| Android APK       | `dotnet publish Pollmaster -f net10.0-android -c Release -p:AndroidPackageFormats=apk` |
+| Android AAB       | `dotnet publish Pollmaster -f net10.0-android -c Release -p:AndroidPackageFormats=aab` |
+
+For Play Store distribution, sign the AAB with `-p:AndroidSigningKeyStore=...` and the
+matching password / alias options. See the
+[official MAUI Android publishing guide](https://learn.microsoft.com/dotnet/maui/android/deployment/).
+
+### Versioning & releases
+
+Merging to `main` triggers `version.yml` which parses the commit history since the
+last tag, decides the bump type from [Conventional Commits](https://www.conventionalcommits.org),
+updates every `<Version>` in the solution's `.csproj` files, tags the commit, and
+creates a GitHub Release. **No manual version edits.**
 
 | Commit type                                        | Bump  |
 | -------------------------------------------------- | ----- |
 | `feat:`                                            | minor |
 | `fix:` / `docs:` / `test:` / `refactor:` / `perf:` | patch |
 | `BREAKING CHANGE:`                                 | major |
+
+---
+
+## Troubleshooting
+
+### Map shows "No data"
+
+The disk snapshot was never written (cold start, warmup still running) or the GIOŚ
+fan-out is rate-limited. Wait 5–7 minutes for the first warmup cycle to complete, or
+check `/healthz/ready` — `overview-cache` should flip from `Unhealthy` to `Healthy`
+once the warmup finishes.
+
+### `adb connect` keeps refusing on Android
+
+Android rotates the Wireless-debugging connect port whenever the screen turns off or
+the user leaves the *Wireless debugging* settings screen. The script retries with
+mDNS re-discovery up to 4 times — if you still see refused connections, **keep the
+Wireless debugging screen open and the phone awake** while running `dev-phone.ps1`.
+
+Also worth checking:
+- Phone and PC are on the same Wi-Fi / LAN (Hyper-V virtual switches are excluded by
+  the script's IP auto-detection).
+- Windows Firewall has allowed inbound traffic on TCP 5100 for `dotnet.exe`.
+
+### Backend logs show `429 Too Many Requests` from GIOŚ
+
+`GiosRateLimitHandler` caps outbound calls at 30 req / 10 s, well under the documented
+GIOŚ limits. If you still hit 429s, GIOŚ may have lowered the per-IP rate or you have
+multiple Pollmaster backends sharing the same egress IP. Reduce
+`Warmup.IntervalSeconds` to 3600 (every hour) so each warmup tick spends less time in
+the rate-limit queue.
+
+### MAUI client times out after 30 s
+
+Pre-1.10 the resilience handler on the client defaulted to a 30 s total request
+timeout, which killed the cold `/api/overview` call. The current configuration
+(`Pollmaster/MauiProgram.cs`) sets a 120 s total timeout that matches the worst-case
+rebuild. If you forked an older version, copy the `AddStandardResilienceHandler`
+options block.
+
+### Buttons or capture menu missing on phone after a Windows build
+
+The MAUI Android target builds independently; `dotnet build -t:Run -f net10.0-windows10.0.19041.0`
+does not redeploy the Android APK. Run `.\dev-phone.ps1` to push the latest build.
+
+---
+
+## Versioning
+
+Pollmaster follows [Semantic Versioning](https://semver.org). See
+[CHANGELOG.md](CHANGELOG.md) and [Releases](https://github.com/Jakub-Syrek/Pollmaster/releases)
+for the full history. The MAUI app's display version, the API assembly version and
+the shared library version are all synchronised by `version.yml`.
+
+---
+
+## Roadmap
+
+- **OpenTelemetry metrics** — counters for cache hits / misses, GIOŚ response times,
+  rate-limit waits, overview rebuild durations.
+- **Hosted iOS build** — the MAUI client targets Android + Windows today; iOS / Mac
+  Catalyst frameworks are wired into the `.csproj` but never built by CI.
+- **`getDisplayMedia` capture on WebView2** — better recording quality on Windows
+  when available, falling back to the html2canvas snapshot loop on Android.
+- **Distributed cache backend** — swap `FileOverviewSnapshotStore` for a Redis-backed
+  layer behind the same `IOverviewSnapshotStore` interface for multi-instance
+  deployments.
+
+---
 
 ## Documentation
 
@@ -323,7 +579,7 @@ on `main` via the `version.yml` GitHub Actions workflow, driven by
 - [ABOUT.md](ABOUT.md) — short project summary
 - [.github/BRANCH_PROTECTION.md](.github/BRANCH_PROTECTION.md) — required GitHub settings
 
-## Data Source & License
+## Data source & license
 
 Air-quality data is provided by [GIOŚ](https://powietrze.gios.gov.pl) under the portal
 regulations. Pollmaster code is released under the MIT license.
