@@ -1,159 +1,348 @@
-html, body, #app {
-    height: 100%;
-    margin: 0;
-}
+/* Pollmaster map UI. Dark-mode professional design system with glass-morphism floating
+   chrome, neon-accent map frame and glossy 3D buttons. Variables come from app.css. */
 
 .map-page {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    background:
+        radial-gradient(ellipse at top, rgba(16, 185, 129, 0.08) 0%, transparent 60%),
+        radial-gradient(ellipse at bottom, rgba(59, 130, 246, 0.05) 0%, transparent 60%),
+        linear-gradient(180deg, #0c1429 0%, #050912 100%);
 }
 
+/* --------------------------------------------------------------------------------------
+   Header — glossy dark-glass with accent underglow.
+   -------------------------------------------------------------------------------------- */
+
 .map-page__header {
-    padding: 0.5rem 0.75rem;
-    background: #1976d2;
-    color: #fff;
+    position: relative;
+    flex: 0 0 auto;
+    padding: 0.75rem 1.1rem;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.4rem 0.75rem;
-    flex: 0 0 auto;
+    gap: 0.6rem 1rem;
+    color: var(--pm-text-primary);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 100%),
+        linear-gradient(135deg, #064e3b 0%, #0f172a 55%, #1e293b 100%);
+    border-bottom: 1px solid var(--pm-border-soft);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.map-page__header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, var(--pm-accent) 50%, transparent 100%);
+    opacity: 0.55;
+    pointer-events: none;
 }
 
 .map-page__header h2 {
-    font-size: 1rem;
-    margin: 0;
     flex: 1 1 8rem;
     min-width: 0;
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+    background: linear-gradient(180deg, #ffffff 0%, #d1fae5 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .map-page__actions {
     display: flex;
-    gap: 0.35rem;
+    gap: 0.45rem;
     flex: 0 1 auto;
     flex-wrap: wrap;
 }
 
+/* --------------------------------------------------------------------------------------
+   Glossy 3D buttons. Default state: subtle glass. Hover: lift + emerald glow. Active:
+   pressed (translates back + inner shadow).
+   -------------------------------------------------------------------------------------- */
+
 .map-page__btn {
-    background: rgba(255, 255, 255, 0.12);
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    border-radius: 4px;
-    padding: 0.25rem 0.65rem;
+    --btn-shadow-rest:
+        inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+        0 1px 1px rgba(0, 0, 0, 0.35),
+        0 2px 8px rgba(0, 0, 0, 0.25);
+    --btn-shadow-hover:
+        inset 0 1px 0 rgba(255, 255, 255, 0.28),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+        0 4px 14px var(--pm-accent-glow),
+        0 2px 6px rgba(0, 0, 0, 0.35);
+    --btn-shadow-active:
+        inset 0 2px 4px rgba(0, 0, 0, 0.5),
+        inset 0 0 0 1px rgba(16, 185, 129, 0.4);
+
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 100%);
+    color: var(--pm-text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    padding: 0.38rem 0.95rem;
     font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
     cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
     white-space: nowrap;
+    box-shadow: var(--btn-shadow-rest);
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
+    transition: transform 0.12s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
 .map-page__btn:hover:not([disabled]) {
-    background: rgba(255, 255, 255, 0.22);
+    background: linear-gradient(180deg, rgba(16, 185, 129, 0.28) 0%, rgba(16, 185, 129, 0.06) 100%);
+    border-color: rgba(16, 185, 129, 0.5);
+    transform: translateY(-1px);
+    box-shadow: var(--btn-shadow-hover);
+}
+
+.map-page__btn:active:not([disabled]) {
+    transform: translateY(0);
+    box-shadow: var(--btn-shadow-active);
 }
 
 .map-page__btn[disabled] {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
 }
 
 .map-page__btn--recording {
-    background: #d32f2f;
-    border-color: #ff8a80;
+    background: linear-gradient(180deg, #f87171 0%, #b91c1c 100%);
+    border-color: rgba(255, 138, 128, 0.55);
+    color: white;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+        0 0 0 0 var(--pm-danger-glow);
     animation: aq-record-pulse 1.4s ease-in-out infinite;
 }
 
 .map-page__btn--recording:hover:not([disabled]) {
-    background: #b71c1c;
+    background: linear-gradient(180deg, #ef4444 0%, #991b1b 100%);
+    border-color: rgba(255, 138, 128, 0.75);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        0 4px 14px var(--pm-danger-glow);
 }
 
 @keyframes aq-record-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.6); }
-    50% { box-shadow: 0 0 0 6px rgba(211, 47, 47, 0); }
+    0%, 100% {
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.35),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+            0 0 0 0 var(--pm-danger-glow);
+    }
+    50% {
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.35),
+            inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+            0 0 0 6px transparent;
+    }
 }
+
+/* --------------------------------------------------------------------------------------
+   Status pill — glassy badge floating on the right.
+   -------------------------------------------------------------------------------------- */
 
 .map-page__status {
-    font-size: 0.8rem;
-    opacity: 0.9;
-    flex: 1 1 100%;
-    margin: 0;
+    margin-left: auto;
+    padding: 0.32rem 0.85rem;
+    font-size: 0.76rem;
+    font-weight: 500;
+    color: var(--pm-text-muted);
+    letter-spacing: 0.02em;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid var(--pm-border-soft);
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
 }
 
-@media (min-width: 720px) {
-    .map-page__header h2 {
-        font-size: 1.1rem;
-    }
-    .map-page__btn {
-        padding: 0.25rem 0.7rem;
-        font-size: 0.8rem;
-    }
-    .map-page__status {
-        font-size: 0.85rem;
-        flex: 0 1 auto;
-        margin-left: auto;
-    }
+@media (max-width: 720px) {
+    .map-page__header h2 { font-size: 0.95rem; }
+    .map-page__status { flex: 1 1 100%; margin: 0; text-align: center; }
 }
+
+/* --------------------------------------------------------------------------------------
+   Map container — gradient bezel + neon emerald edge ring + deep drop shadow + soft
+   inner vignette so the map "floats".
+   -------------------------------------------------------------------------------------- */
 
 .map-page__container {
     flex: 1 1 auto;
     position: relative;
+    padding: 10px;
+    background:
+        radial-gradient(ellipse at center, rgba(16, 185, 129, 0.06) 0%, transparent 60%),
+        linear-gradient(180deg, #0f172a 0%, #050912 100%);
 }
 
 #pollmaster-map {
     position: absolute;
-    inset: 0;
+    inset: 10px;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow:
+        0 0 0 1px rgba(148, 163, 184, 0.18),
+        0 0 0 2px rgba(16, 185, 129, 0.25),
+        0 0 32px rgba(16, 185, 129, 0.18),
+        0 24px 60px rgba(0, 0, 0, 0.55),
+        inset 0 0 50px rgba(0, 0, 0, 0.55);
 }
+
+/* --------------------------------------------------------------------------------------
+   Markers — 22 px circles with white outer ring, dark inner ring and AQ-coloured core.
+   Severe stations (level >= 4) get the existing pulse + halo, now with stronger bloom.
+   -------------------------------------------------------------------------------------- */
 
 .aq-marker {
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    border: 2px solid rgba(0, 0, 0, 0.4);
-    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+    border: 2px solid rgba(255, 255, 255, 0.92);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.45),
+        0 4px 10px rgba(0, 0, 0, 0.5);
 }
 
-.aq-popup__title {
-    font-weight: 600;
-    margin-bottom: 0.25rem;
+.aq-marker--pulse {
+    position: relative;
+    animation: aq-marker-core-pulse 2s ease-in-out infinite;
 }
 
-.aq-popup__city {
-    color: #555;
-    margin-bottom: 0.5rem;
+.aq-marker--pulse::after {
+    content: '';
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    color: inherit;
+    opacity: 0.7;
+    animation: aq-marker-halo 1.8s ease-out infinite;
+    pointer-events: none;
+}
+
+.aq-color-4.aq-marker--pulse::after { box-shadow: 0 0 16px #ef4444; }
+.aq-color-5.aq-marker--pulse::after { box-shadow: 0 0 22px #b91c1c; }
+
+@keyframes aq-marker-core-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.18); }
+}
+
+@keyframes aq-marker-halo {
+    0% { transform: scale(0.8); opacity: 0.85; }
+    100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* GIOŚ palette — kept verbatim so legend stays consistent. */
+.aq-color-0 { background: #57b108; }
+.aq-color-1 { background: #b0dd10; }
+.aq-color-2 { background: #ffd911; }
+.aq-color-3 { background: #e58100; }
+.aq-color-4 { background: #b21f00; }
+.aq-color-5 { background: #990000; }
+.aq-color--unknown { background: #64748b; }
+
+/* --------------------------------------------------------------------------------------
+   Leaflet popup — modern white card with soft shadow and accent rule.
+   -------------------------------------------------------------------------------------- */
+
+.leaflet-popup-content-wrapper {
+    background: #ffffff;
+    color: #0f172a;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    box-shadow:
+        0 16px 48px rgba(0, 0, 0, 0.35),
+        0 4px 12px rgba(0, 0, 0, 0.2);
+    padding: 2px;
+}
+
+.leaflet-popup-content {
+    margin: 14px 16px;
+    line-height: 1.45;
     font-size: 0.85rem;
 }
 
+.leaflet-popup-tip {
+    background: #ffffff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.leaflet-popup-close-button {
+    color: #94a3b8 !important;
+    font-weight: 300 !important;
+    padding: 6px 8px !important;
+}
+.leaflet-popup-close-button:hover { color: #1e293b !important; }
+
+.aq-popup__title {
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 2px;
+    color: #0f172a;
+    letter-spacing: 0.005em;
+}
+
+.aq-popup__city {
+    color: #64748b;
+    margin-bottom: 0.65rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
 .aq-popup__index {
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
     color: #fff;
     display: inline-block;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.7rem;
     font-weight: 600;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.3),
+        0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
 .aq-popup__sensors {
     list-style: none;
     padding: 0;
     margin: 0;
-    max-height: 240px;
+    max-height: 260px;
     overflow-y: auto;
 }
 
 .aq-popup__sensor {
-    padding: 0.35rem 0;
-    border-bottom: 1px solid #eee;
-    font-size: 0.85rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    font-size: 0.82rem;
 }
-
-.aq-popup__sensor:last-child {
-    border-bottom: none;
-}
-
-.aq-popup__sensor--empty {
-    opacity: 0.5;
-}
+.aq-popup__sensor:last-child { border-bottom: none; }
+.aq-popup__sensor--empty { opacity: 0.5; }
 
 .aq-popup__sensor-head {
     display: flex;
@@ -163,124 +352,133 @@ html, body, #app {
 }
 
 .aq-popup__sensor-name {
-    color: #333;
-    font-weight: 500;
+    color: #1e293b;
+    font-weight: 600;
+    letter-spacing: 0.02em;
 }
 
 .aq-popup__sensor-value {
-    color: #1976d2;
-    font-weight: 600;
+    color: #059669;
+    font-weight: 700;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .aq-popup__sensor-value small {
-    color: #888;
-    font-weight: 400;
-    margin-left: 0.25rem;
-    font-size: 0.75rem;
+    color: #94a3b8;
+    font-weight: 500;
+    margin-left: 0.3rem;
+    font-size: 0.72rem;
 }
 
 .aq-popup__bar {
     height: 6px;
-    background: #f0f0f0;
-    border-radius: 3px;
-    margin-top: 0.25rem;
+    background: #e2e8f0;
+    border-radius: 999px;
+    margin-top: 0.35rem;
     overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
-.aq-popup__bar--idle {
-    background: #f5f5f5;
-}
+.aq-popup__bar--idle { background: #f1f5f9; }
 
 .aq-popup__bar-fill {
     height: 100%;
-    border-radius: 3px;
+    border-radius: 999px;
     transition: width 0.3s ease;
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.15);
 }
 
-.aq-popup__bar-fill.aq-popup__bar--good { background: #4caf50; }
-.aq-popup__bar-fill.aq-popup__bar--warn { background: #ffb300; }
-.aq-popup__bar-fill.aq-popup__bar--bad { background: #d32f2f; }
+.aq-popup__bar-fill.aq-popup__bar--good { background: linear-gradient(90deg, #34d399, #10b981); }
+.aq-popup__bar-fill.aq-popup__bar--warn { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+.aq-popup__bar-fill.aq-popup__bar--bad  { background: linear-gradient(90deg, #f87171, #dc2626); }
 .aq-popup__bar-fill.aq-popup__bar--empty { background: transparent; }
 
 .aq-popup__loading {
     font-style: italic;
-    color: #777;
-    font-size: 0.85rem;
+    color: #94a3b8;
+    font-size: 0.82rem;
 }
 
-.aq-color-0 { background: #57b108; }
-.aq-color-1 { background: #b0dd10; }
-.aq-color-2 { background: #ffd911; }
-.aq-color-3 { background: #e58100; }
-.aq-color-4 { background: #b21f00; }
-.aq-color-5 { background: #990000; }
-.aq-color--unknown { background: #888; }
+/* --------------------------------------------------------------------------------------
+   Floating layer switcher — full glass-morphism card with emerald active pill.
+   -------------------------------------------------------------------------------------- */
 
-/* Severe stations pulse to draw attention even at lower zoom levels. */
-.aq-marker--pulse {
-    position: relative;
-    animation: aq-marker-core-pulse 2s ease-in-out infinite;
-}
-
-.aq-marker--pulse::after {
-    content: '';
-    position: absolute;
-    inset: -4px;
-    border-radius: 50%;
-    border: 2px solid currentColor;
-    color: inherit;
-    opacity: 0.7;
-    animation: aq-marker-halo 1.8s ease-out infinite;
-    pointer-events: none;
-}
-
-.aq-color-4.aq-marker--pulse::after { box-shadow: 0 0 12px #b21f00; }
-.aq-color-5.aq-marker--pulse::after { box-shadow: 0 0 16px #990000; }
-
-@keyframes aq-marker-core-pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.15); }
-}
-
-@keyframes aq-marker-halo {
-    0% { transform: scale(0.8); opacity: 0.8; }
-    100% { transform: scale(2.2); opacity: 0; }
-}
-
-/* Layer switcher (Markers / per-pollutant heatmap) — sits in top-right corner. */
 .aq-layer-switch {
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(6px);
-    border-radius: 6px;
-    padding: 2px;
+    background: rgba(15, 23, 42, 0.78);
+    backdrop-filter: blur(14px) saturate(180%);
+    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 10px;
+    padding: 3px;
     display: flex;
-    gap: 2px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    gap: 3px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        0 12px 36px rgba(0, 0, 0, 0.45);
 }
 
 .aq-layer-switch__btn {
-    border: none;
     background: transparent;
-    color: #333;
-    padding: 4px 10px;
-    font-size: 0.8rem;
-    font-weight: 500;
+    color: rgba(241, 245, 249, 0.85);
+    border: none;
+    padding: 0.36rem 0.85rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    border-radius: 7px;
     cursor: pointer;
-    border-radius: 4px;
-    transition: background 0.15s ease, color 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.18s ease;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
 }
 
 .aq-layer-switch__btn:hover {
-    background: rgba(25, 118, 210, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
 }
 
 .aq-layer-switch__btn--active {
-    background: #1976d2;
-    color: #fff;
+    background: linear-gradient(180deg, var(--pm-accent) 0%, var(--pm-accent-deep) 100%);
+    color: white;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.32),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.2),
+        0 2px 10px var(--pm-accent-glow);
 }
 
 .aq-layer-switch__btn--active:hover {
-    background: #1565c0;
-    color: #fff;
+    color: white;
+    background: linear-gradient(180deg, #34d399 0%, var(--pm-accent) 100%);
+}
+
+/* --------------------------------------------------------------------------------------
+   Leaflet built-in controls (zoom, attribution) — tint to match dark theme.
+   -------------------------------------------------------------------------------------- */
+
+.leaflet-control-zoom a,
+.leaflet-bar a {
+    background: rgba(15, 23, 42, 0.78);
+    color: #f1f5f9;
+    border: 1px solid rgba(148, 163, 184, 0.22) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+.leaflet-control-zoom a:hover,
+.leaflet-bar a:hover {
+    background: rgba(16, 185, 129, 0.25);
+    color: white;
+}
+
+.leaflet-control-attribution {
+    background: rgba(15, 23, 42, 0.7) !important;
+    color: #94a3b8 !important;
+    backdrop-filter: blur(8px);
+    border-radius: 6px 0 0 0;
+    font-size: 0.65rem;
+    padding: 2px 6px;
+}
+
+.leaflet-control-attribution a {
+    color: #34d399 !important;
 }
