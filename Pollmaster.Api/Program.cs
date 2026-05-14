@@ -5,6 +5,7 @@ using Pollmaster.Api.Gios;
 using Pollmaster.Api.Gios.Limits;
 using Pollmaster.Api.Gios.Mapping;
 using Pollmaster.Api.Gios.Throttling;
+using Pollmaster.Api.Health;
 using Pollmaster.Api.Persistence;
 using Pollmaster.Api.Services;
 
@@ -15,6 +16,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddMemoryCache();
 builder.Services.AddProblemDetails();
+builder.Services.AddHttpClient();
+
+builder.Services
+    .AddHealthChecks()
+    .AddCheck<OverviewCacheHealthCheck>("overview-cache", tags: ["ready"])
+    .AddCheck<GiosReachabilityHealthCheck>("gios-reachability", tags: ["ready"]);
 
 builder.Services
     .AddOptions<GiosOptions>()
