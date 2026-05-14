@@ -98,5 +98,6 @@ public static class MauiProgram
         });
 
         services.AddSingleton<IMediaCaptureService, MediaCaptureService>();
+        services.AddSingleton<IOfflineOverviewCache, FileOfflineOverviewCache>();
     }
 }

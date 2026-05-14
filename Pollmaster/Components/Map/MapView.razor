@@ -8,6 +8,7 @@
 @implements IAsyncDisposable
 @inject IPollmasterApiClient ApiClient
 @inject IMediaCaptureService CaptureService
+@inject IOfflineOverviewCache OfflineCache
 @inject ILogger<MapView> Logger
 @inject IJSRuntime JS
 
@@ -116,12 +117,32 @@
 
     private async Task LoadOverviewAsync(CancellationToken cancellationToken)
     {
-        _status = "Loading overview (first load may take ~60s)...";
-        StateHasChanged();
+        // Stage 1 — instant render from the on-device snapshot, if we have one.
+        // Lets the user see the map populated within ~50 ms of opening the app,
+        // even when the backend is asleep, cold-starting on a free tier, or the
+        // phone has no internet at all.
+        var offline = await OfflineCache.LoadAsync(cancellationToken);
+        if (offline is not null)
+        {
+            var cachedMarkers = offline.Stations.Select(ToMarker).ToArray();
+            await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)cachedMarkers);
+            var age = DateTime.UtcNow - offline.SavedAt;
+            _status = $"Offline cache: {cachedMarkers.Length} stations · {FormatAge(age)} old · refreshing…";
+            StateHasChanged();
+        }
+        else
+        {
+            _status = "Loading overview (first load may take ~60s)…";
+            StateHasChanged();
+        }
+
+        // Stage 2 — try to refresh from the backend in the background.
         var result = await ApiClient.GetOverviewAsync(cancellationToken);
         if (result.IsFailure)
         {
-            _status = $"Backend error: {result.Error}";
+            _status = offline is not null
+                ? $"Offline · backend unreachable ({result.Error}). Showing cached snapshot."
+                : $"Backend error: {result.Error}";
             StateHasChanged();
             return;
         }
@@ -130,6 +151,17 @@
         await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
         _status = $"{markers.Length} stations loaded";
         StateHasChanged();
+
+        // Persist asynchronously — don't make the UI wait for IO.
+        _ = OfflineCache.SaveAsync(result.Value, _cts.Token);
+    }
+
+    private static string FormatAge(TimeSpan age)
+    {
+        if (age.TotalMinutes < 1) return "<1 min";
+        if (age.TotalMinutes < 60) return $"{(int)age.TotalMinutes} min";
+        if (age.TotalHours < 24) return $"{age.TotalHours:F1} h";
+        return $"{(int)age.TotalDays} d";
     }
 
     private async Task OnRefreshClickedAsync()
