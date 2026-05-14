@@ -54,12 +54,25 @@ the MAUI WinUI client (native window).
 
 ### Deploy to a physical Android phone
 
+Two scripts, two scenarios:
+
 ```powershell
+# LAN development (phone + PC on the same WiFi, local backend)
 .\dev-phone.ps1                                   # auto-detects LAN IP, USB or paired wireless
 .\dev-phone.ps1 -Connect 192.168.0.88:40149       # explicit wireless target
 .\dev-phone.ps1 -PairWith 192.168.0.88:41123 -PairCode 123456   # first-time wireless pairing
 .\dev-phone.ps1 -SkipBackend                      # backend already running on the LAN
+
+# Production deploy (phone uses the Railway/Render-hosted backend, works on any network)
+.\prod-phone.ps1                                  # Release build + /healthz preflight + adb deploy
+.\prod-phone.ps1 -Connect 192.168.0.88:34667      # explicit wireless target
+.\prod-phone.ps1 -SkipHealthcheck                 # skip /healthz when backend is being swapped
 ```
+
+`prod-phone.ps1` reads the committed Railway URL from `appsettings.Android.json`,
+curls `/healthz` to fail fast if the backend is down, then builds + deploys without
+ever starting a local backend. Use it whenever you want the phone to keep working
+outside your LAN (mobile data, holidays, demos).
 
 The script kills lingering build / runtime processes, wipes every `bin/` and `obj/`,
 detects the PC's RFC 1918 IPv4 and rewrites `Pollmaster/Resources/Raw/appsettings.Android.json`
@@ -192,8 +205,11 @@ Pollmaster.slnx
 ├── Pollmaster.Api\           ASP.NET Core 10 backend (GIOŚ proxy + cache + REST API)
 ├── Pollmaster.Api.Tests\     xUnit tests (mappers, severity, projector, dedupe, snapshot store)
 ├── Pollmaster\               .NET MAUI Blazor Hybrid client (Leaflet map UI)
+├── Dockerfile                Multi-stage Alpine image for the backend (Railway/Fly/Render/Hetzner)
+├── railway.toml              Railway deployment manifest (Dockerfile builder + /healthz probe)
 ├── dev-run.ps1               Windows dev loop (kill / clean / build / run backend + MAUI)
-└── dev-phone.ps1             Android phone dev loop (mDNS auto-connect + adb deploy)
+├── dev-phone.ps1             Android phone LAN dev loop (mDNS auto-connect + adb deploy)
+└── prod-phone.ps1            Android phone production deploy (Railway URL + /healthz preflight)
 ```
 
 ### Design patterns at a glance
