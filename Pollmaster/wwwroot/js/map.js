@@ -11,8 +11,42 @@
         markers: new Map(),
         stations: [],
         dotnetRef: null,
-        activeLayer: 'markers'
+        activeLayer: 'markers',
+        satelliteLayer: null,
+        satelliteLayerKey: null,
+        satelliteMarker: null
     };
+
+    // NASA GIBS WMTS endpoints — public, no API key, served via CloudFront. Each layer is a
+    // daily mosaic; we pin to "default" so GIBS picks the most recent available date.
+    // GoogleMapsCompatible_Level6 means tiles exist up to zoom 6 (continent-scale view);
+    // Leaflet falls back to interpolation when the user zooms in further.
+    const SATELLITE_LAYERS = {
+        'aod': {
+            label: 'Aerosols',
+            title: 'MODIS Aqua — Aerosol Optical Depth (PM proxy)',
+            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Aqua_Aerosol/default/{time}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png',
+            maxZoom: 6,
+            attribution: '&copy; NASA EOSDIS GIBS — MODIS Aqua AOD'
+        },
+        'no2': {
+            label: 'NO₂',
+            title: 'OMI — Tropospheric NO₂ column',
+            url: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/OMI_Nitrogen_Dioxide_Tropo_Column/default/{time}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png',
+            maxZoom: 6,
+            attribution: '&copy; NASA EOSDIS GIBS — OMI NO₂'
+        }
+    };
+
+    // GIBS publishes daily mosaics with a ~1-day latency. Use yesterday's date so the
+    // very-recent-day-not-yet-published case never returns 404 tiles.
+    function gibsTimeParam() {
+        const d = new Date(Date.now() - 24 * 3600 * 1000);
+        const yyyy = d.getUTCFullYear();
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(d.getUTCDate()).padStart(2, '0');
+        return yyyy + '-' + mm + '-' + dd;
+    }
 
     const AQ_LABELS = {
         '-1': 'No data',
@@ -297,6 +331,133 @@
 
         state.markerLayer = L.layerGroup().addTo(state.map);
         buildLayerControl().addTo(state.map);
+        buildSatelliteControl().addTo(state.map);
+
+        // Map-background click (i.e. not on a marker) asks the backend for a satellite-
+        // assimilated reading at the clicked coordinate. Marker clicks bubble through their
+        // own popup binding and don't fire this — Leaflet stops propagation for layers.
+        state.map.on('click', function (ev) {
+            if (!state.dotnetRef) {
+                return;
+            }
+            const lat = ev.latlng.lat;
+            const lon = ev.latlng.lng;
+            placeSatelliteProbe(lat, lon, 'Loading satellite reading…');
+            state.dotnetRef.invokeMethodAsync('OnMapClickedAsync', lat, lon)
+                .catch(function () { /* Blazor side reports via setSatelliteReading */ });
+        });
+    }
+
+    function placeSatelliteProbe(lat, lon, message) {
+        if (!state.map) {
+            return;
+        }
+        if (state.satelliteMarker) {
+            state.satelliteMarker.setLatLng([lat, lon]);
+        } else {
+            state.satelliteMarker = L.marker([lat, lon], {
+                icon: L.divIcon({
+                    className: '',
+                    html: '<div class="aq-probe"></div>',
+                    iconSize: [18, 18],
+                    iconAnchor: [9, 9]
+                })
+            }).addTo(state.map);
+        }
+        state.satelliteMarker.bindPopup(
+            '<div class="aq-popup aq-popup--probe">' +
+            '<div class="aq-popup__title">Satellite (' + lat.toFixed(3) + ', ' + lon.toFixed(3) + ')</div>' +
+            '<div class="aq-popup__loading">' + escapeHtml(message) + '</div></div>'
+        ).openPopup();
+    }
+
+    // Called from Blazor once the /api/satellite/point round-trip completes.
+    function setSatelliteReading(reading) {
+        if (!state.satelliteMarker) {
+            return;
+        }
+        const html = reading
+            ? satellitePopupHtml(reading)
+            : '<div class="aq-popup aq-popup--probe"><div class="aq-popup__loading">Satellite data unavailable.</div></div>';
+        state.satelliteMarker.bindPopup(html).openPopup();
+    }
+
+    function satellitePopupHtml(reading) {
+        const aqiLabels = ['Unknown', 'Good', 'Fair', 'Moderate', 'Poor', 'Very Poor'];
+        const aqi = reading.aqi || 0;
+        const label = aqiLabels[Math.min(Math.max(aqi, 0), aqiLabels.length - 1)];
+        const components = reading.components || {};
+        const sensors = Object.keys(components)
+            .sort()
+            .map(function (code) {
+                return { code: code, value: components[code], unit: POLLUTANT_UNIT };
+            });
+        const subtitle = reading.observedAt
+            ? new Date(reading.observedAt).toLocaleString()
+            : '';
+        return '<div class="aq-popup aq-popup--probe">' +
+            '<div class="aq-popup__title">Satellite (' +
+            reading.latitude.toFixed(3) + ', ' + reading.longitude.toFixed(3) + ')</div>' +
+            '<div class="aq-popup__city">' + escapeHtml(subtitle) + '</div>' +
+            '<span class="aq-popup__index aq-color-' + Math.max(aqi - 1, 0) + '">' +
+            escapeHtml(label) + ' (AQI ' + aqi + ')</span>' +
+            '<div class="aq-popup__body">' + sensorsHtml(sensors) + '</div>' +
+            '<div class="aq-popup__attribution">Source: OpenWeatherMap (Sentinel-5P assimilated)</div>' +
+            '</div>';
+    }
+
+    function buildSatelliteControl() {
+        const control = L.control({ position: 'topleft' });
+        control.onAdd = function () {
+            const wrapper = L.DomUtil.create('div', 'aq-sat-switch leaflet-bar');
+            const buttons = [{ key: null, label: 'No sat' }]
+                .concat(Object.keys(SATELLITE_LAYERS).map(function (k) {
+                    return { key: k, label: SATELLITE_LAYERS[k].label };
+                }));
+            buttons.forEach(function (btn) {
+                const node = L.DomUtil.create('button', 'aq-sat-switch__btn', wrapper);
+                node.type = 'button';
+                node.textContent = btn.label;
+                node.title = btn.key ? SATELLITE_LAYERS[btn.key].title : 'Hide satellite overlay';
+                if (btn.key === state.satelliteLayerKey) {
+                    node.classList.add('aq-sat-switch__btn--active');
+                }
+                L.DomEvent.disableClickPropagation(node);
+                L.DomEvent.on(node, 'click', function () {
+                    wrapper.querySelectorAll('.aq-sat-switch__btn').forEach(function (b) {
+                        b.classList.remove('aq-sat-switch__btn--active');
+                    });
+                    node.classList.add('aq-sat-switch__btn--active');
+                    setSatelliteLayer(btn.key);
+                });
+            });
+            return wrapper;
+        };
+        return control;
+    }
+
+    function setSatelliteLayer(layerKey) {
+        if (!state.map) {
+            return;
+        }
+        if (state.satelliteLayer) {
+            state.map.removeLayer(state.satelliteLayer);
+            state.satelliteLayer = null;
+        }
+        state.satelliteLayerKey = layerKey;
+        if (!layerKey || !SATELLITE_LAYERS[layerKey]) {
+            return;
+        }
+        const def = SATELLITE_LAYERS[layerKey];
+        const url = def.url.replace('{time}', gibsTimeParam());
+        state.satelliteLayer = L.tileLayer(url, {
+            maxZoom: 18,
+            maxNativeZoom: def.maxZoom,
+            opacity: 0.55,
+            attribution: def.attribution,
+            crossOrigin: true
+        });
+        state.satelliteLayer.addTo(state.map);
     }
 
     function addStations(stations) {
@@ -339,11 +500,15 @@
         state.stations = [];
         state.dotnetRef = null;
         state.activeLayer = 'markers';
+        state.satelliteLayer = null;
+        state.satelliteLayerKey = null;
+        state.satelliteMarker = null;
     }
 
     window.pollmasterMap = {
         initMap: initMap,
         addStations: addStations,
+        setSatelliteReading: setSatelliteReading,
         // updateStationSensors removed — popups now serve straight from the overview payload.
         dispose: dispose
     };

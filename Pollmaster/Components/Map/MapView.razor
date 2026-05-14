@@ -231,6 +231,36 @@
         }
     }
 
+    /// <summary>
+    /// Invoked from JS when the user clicks an empty area of the map. Hits the satellite
+    /// endpoint and pushes the resulting reading back into the open probe popup. Failures
+    /// land as a "satellite data unavailable" message instead of crashing the JS layer.
+    /// </summary>
+    /// <param name="latitude">Clicked WGS84 latitude.</param>
+    /// <param name="longitude">Clicked WGS84 longitude.</param>
+    [JSInvokable]
+    public async Task OnMapClickedAsync(double latitude, double longitude)
+    {
+        try
+        {
+            var result = await ApiClient.GetSatellitePointAsync(latitude, longitude, _cts.Token);
+            object? payload = result.IsSuccess ? result.Value : null;
+            await JS.InvokeVoidAsync("pollmasterMap.setSatelliteReading", payload);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Satellite point fetch failed");
+            try
+            {
+                await JS.InvokeVoidAsync("pollmasterMap.setSatelliteReading", (object?)null);
+            }
+            catch
+            {
+                // WebView may already be torn down.
+            }
+        }
+    }
+
     private static MapMarker ToMarker(StationOverviewDto overview)
     {
         var pollutants = overview.Pollutants

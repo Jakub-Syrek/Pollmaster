@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -39,6 +40,17 @@ public sealed class PollmasterApiClient : IPollmasterApiClient
     public Task<Result<StationSnapshotDto>> GetStationSnapshotAsync(int stationId, CancellationToken cancellationToken)
     {
         return GetAsync<StationSnapshotDto>($"api/stations/{stationId}/snapshot", cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<Result<SatellitePollutionDto>> GetSatellitePointAsync(
+        double latitude,
+        double longitude,
+        CancellationToken cancellationToken)
+    {
+        var path = string.Create(CultureInfo.InvariantCulture,
+            $"api/satellite/point?lat={latitude:0.######}&lon={longitude:0.######}");
+        return GetAsync<SatellitePollutionDto>(path, cancellationToken);
     }
 
     private async Task<Result<T>> GetAsync<T>(string relativeUrl, CancellationToken cancellationToken, T? fallback = default)

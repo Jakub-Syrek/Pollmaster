@@ -18,4 +18,14 @@ public interface IPollmasterApiClient
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Snapshot DTO.</returns>
     Task<Result<StationSnapshotDto>> GetStationSnapshotAsync(int stationId, CancellationToken cancellationToken);
+
+    /// <summary>Fetch the satellite-assimilated reading for an arbitrary geographic point.</summary>
+    /// <param name="latitude">WGS84 latitude.</param>
+    /// <param name="longitude">WGS84 longitude.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Satellite point DTO.</returns>
+    Task<Result<SatellitePollutionDto>> GetSatellitePointAsync(
+        double latitude,
+        double longitude,
+        CancellationToken cancellationToken);
 }
