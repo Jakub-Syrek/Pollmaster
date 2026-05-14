@@ -1,4 +1,5 @@
 using Polly;
+using Pollmaster.Api.Cams;
 using Pollmaster.Api.Configuration;
 using Pollmaster.Api.Endpoints;
 using Pollmaster.Api.Gios;
@@ -50,6 +51,12 @@ builder.Services
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services
+    .AddOptions<CamsOptions>()
+    .Bind(builder.Configuration.GetSection(CamsOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddSingleton<IStationMapper, StationMapper>();
 builder.Services.AddSingleton<ISensorMapper, SensorMapper>();
 builder.Services.AddSingleton<IMeasurementMapper, MeasurementMapper>();
@@ -65,6 +72,12 @@ builder.Services.AddScoped<IMeasurementService, MeasurementService>();
 builder.Services.AddScoped<IAirQualityIndexService, AirQualityIndexService>();
 builder.Services.AddScoped<IStationSnapshotService, StationSnapshotService>();
 builder.Services.AddScoped<IOverviewService, OverviewService>();
+
+// Satellite providers — registration order is the chain-of-responsibility order. CAMS
+// (Open-Meteo) ships first because it needs no key and works out of the box; OWM is the
+// secondary source when configured. Adding a new provider is a single AddScoped<>.
+builder.Services.AddScoped<ISatelliteProvider, CamsSatelliteProvider>();
+builder.Services.AddScoped<ISatelliteProvider, OwmSatelliteProvider>();
 builder.Services.AddScoped<ISatellitePollutionService, SatellitePollutionService>();
 
 builder.Services.AddHostedService<OverviewCacheWarmupService>();
@@ -114,6 +127,29 @@ builder.Services
     .AddStandardResilienceHandler(options =>
     {
         // OWM free tier is generous but per-minute capped; keep retries modest.
+        options.Retry.MaxRetryAttempts = 2;
+        options.Retry.BackoffType = DelayBackoffType.Exponential;
+        options.Retry.UseJitter = true;
+        options.Retry.Delay = TimeSpan.FromMilliseconds(400);
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(10);
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+    });
+
+builder.Services
+    .AddHttpClient<ICamsApiClient, CamsApiClient>((sp, http) =>
+    {
+        var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CamsOptions>>().Value;
+        http.BaseAddress = new Uri(options.BaseAddress);
+        http.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        http.DefaultRequestHeaders.Accept.Clear();
+        http.DefaultRequestHeaders.Accept.Add(new("application/json"));
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("Pollmaster/1.0 (+https://github.com/Jakub-Syrek/Pollmaster)");
+    })
+    .AddStandardResilienceHandler(options =>
+    {
+        // Open-Meteo has no documented rate-limit on the free tier but please-be-nice
+        // policies still apply — modest retries + short timeouts keep us a good citizen.
         options.Retry.MaxRetryAttempts = 2;
         options.Retry.BackoffType = DelayBackoffType.Exponential;
         options.Retry.UseJitter = true;

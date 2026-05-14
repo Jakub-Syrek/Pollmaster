@@ -1,47 +1,52 @@
 using System.Globalization;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Options;
 using Pollmaster.Api.Configuration;
-using Pollmaster.Api.Owm;
-using Pollmaster.Api.Owm.Models;
 using Pollmaster.Shared.Common;
 using Pollmaster.Shared.Contracts;
 
 namespace Pollmaster.Api.Services;
 
 /// <summary>
-/// Default <see cref="ISatellitePollutionService"/> backed by <see cref="IOwmApiClient"/>.
-/// Caches per-point readings in <see cref="IMemoryCache"/> with the TTL configured in
-/// <see cref="OwmOptions.CacheTtlSeconds"/> so repeated taps on the map do not chew the
-/// free-tier quota (1 000 calls/day).
+/// Default <see cref="ISatellitePollutionService"/>. Acts as the orchestrator over an
+/// ordered chain of <see cref="ISatelliteProvider"/> strategies — tries each enabled
+/// provider in registration order and returns the first one that yields data. Each
+/// provider has its own cache slot, so a transient failure on one (e.g. expired OWM key)
+/// does not poison hits served by the next (e.g. CAMS via Open-Meteo).
 /// </summary>
 public sealed class SatellitePollutionService : ISatellitePollutionService
 {
-    // Coordinate precision used both for the cache key and the upstream request. A 3-decimal
-    // grid (~110 m) is plenty for a citywide overlay and lets nearby clicks share a cache hit.
+    // ~110 m grid. Plenty for a citywide overlay and lets nearby clicks share a cache hit.
     private const int CoordinatePrecision = 3;
 
-    private readonly IOwmApiClient _client;
+    private readonly IReadOnlyList<ISatelliteProvider> _providers;
     private readonly IMemoryCache _cache;
-    private readonly OwmOptions _options;
+    private readonly TimeSpan _cacheTtl;
 
     /// <summary>Construct the service.</summary>
-    /// <param name="client">OWM adapter.</param>
+    /// <param name="providers">Ordered chain of satellite providers (DI fan-in).</param>
     /// <param name="cache">Memory cache.</param>
-    /// <param name="options">OWM options.</param>
+    /// <param name="owmOptions">OWM options — drives the cache TTL when OWM is enabled.</param>
+    /// <param name="camsOptions">CAMS options — fallback TTL when OWM is not configured.</param>
     public SatellitePollutionService(
-        IOwmApiClient client,
+        IEnumerable<ISatelliteProvider> providers,
         IMemoryCache cache,
-        IOptions<OwmOptions> options)
+        Microsoft.Extensions.Options.IOptions<OwmOptions> owmOptions,
+        Microsoft.Extensions.Options.IOptions<CamsOptions> camsOptions)
     {
-        ArgumentNullException.ThrowIfNull(options);
-        _client = client ?? throw new ArgumentNullException(nameof(client));
+        ArgumentNullException.ThrowIfNull(providers);
+        ArgumentNullException.ThrowIfNull(owmOptions);
+        ArgumentNullException.ThrowIfNull(camsOptions);
+        _providers = providers.ToArray();
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-        _options = options.Value;
+        // Both providers happen to use the same TTL knob today; we pick the smaller value
+        // so the cache stays fresher than the most aggressive caller expects.
+        var owmTtl = owmOptions.Value.CacheTtlSeconds;
+        var camsTtl = camsOptions.Value.CacheTtlSeconds;
+        _cacheTtl = TimeSpan.FromSeconds(Math.Min(owmTtl, camsTtl));
     }
 
     /// <inheritdoc />
-    public bool IsEnabled => _options.IsEnabled;
+    public bool IsEnabled => _providers.Any(p => p.IsEnabled);
 
     /// <inheritdoc />
     public async Task<Result<SatellitePollutionDto>> GetCurrentAsync(
@@ -49,71 +54,55 @@ public sealed class SatellitePollutionService : ISatellitePollutionService
         double longitude,
         CancellationToken cancellationToken)
     {
-        if (!_options.IsEnabled)
+        if (!IsEnabled)
         {
-            return Result<SatellitePollutionDto>.Failure("Satellite provider not configured.");
+            return Result<SatellitePollutionDto>.Failure("No satellite provider configured.");
         }
 
-        var roundedLat = Math.Round(latitude, CoordinatePrecision);
-        var roundedLon = Math.Round(longitude, CoordinatePrecision);
-        var cacheKey = CacheKeys.SatelliteForPoint(roundedLat, roundedLon);
+        var lat = Math.Round(latitude, CoordinatePrecision);
+        var lon = Math.Round(longitude, CoordinatePrecision);
+        var errors = new List<string>(_providers.Count);
 
-        if (_cache.TryGetValue(cacheKey, out SatellitePollutionDto? cached) && cached is not null)
+        foreach (var provider in _providers)
         {
-            return Result<SatellitePollutionDto>.Success(cached);
+            if (!provider.IsEnabled)
+            {
+                continue;
+            }
+
+            var key = CacheKeys.SatelliteForPoint(provider.Name, lat, lon);
+            if (_cache.TryGetValue(key, out SatellitePollutionDto? cached) && cached is not null)
+            {
+                return Result<SatellitePollutionDto>.Success(cached);
+            }
+
+            SatellitePollutionDto? reading;
+            try
+            {
+                reading = await provider
+                    .GetCurrentAsync(lat, lon, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{provider.Name}: {ex.GetType().Name}");
+                continue;
+            }
+
+            if (reading is null)
+            {
+                errors.Add($"{provider.Name}: no data");
+                continue;
+            }
+
+            _cache.Set(key, reading, _cacheTtl);
+            return Result<SatellitePollutionDto>.Success(reading);
         }
 
-        var response = await _client
-            .GetCurrentAsync(roundedLat, roundedLon, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (response is null || response.List is null || response.List.Count == 0)
-        {
-            return Result<SatellitePollutionDto>.Failure("Satellite provider returned no data.");
-        }
-
-        var dto = Map(response, roundedLat, roundedLon);
-        _cache.Set(cacheKey, dto, TimeSpan.FromSeconds(_options.CacheTtlSeconds));
-        return Result<SatellitePollutionDto>.Success(dto);
-    }
-
-    private static SatellitePollutionDto Map(
-        OwmAirPollutionResponse response,
-        double latitude,
-        double longitude)
-    {
-        var item = response.List![0];
-        var components = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-        if (item.Components is { } c)
-        {
-            // Translate OWM's lower-case codes to the same vocabulary GIOŚ uses, so the UI
-            // can reuse the same pollutant labels / WHO-limit lookup.
-            AddIfPresent(components, "CO", c.Co);
-            AddIfPresent(components, "NO", c.No);
-            AddIfPresent(components, "NO2", c.No2);
-            AddIfPresent(components, "O3", c.O3);
-            AddIfPresent(components, "SO2", c.So2);
-            AddIfPresent(components, "PM2.5", c.Pm25);
-            AddIfPresent(components, "PM10", c.Pm10);
-            AddIfPresent(components, "NH3", c.Nh3);
-        }
-
-        var observed = DateTimeOffset.FromUnixTimeSeconds(item.Dt).UtcDateTime;
-        return new SatellitePollutionDto(
-            Latitude: latitude,
-            Longitude: longitude,
-            ObservedAt: observed,
-            Aqi: item.Main?.Aqi ?? 0,
-            Components: components,
-            Source: "openweathermap");
-    }
-
-    private static void AddIfPresent(IDictionary<string, double> bag, string code, double? value)
-    {
-        if (value.HasValue)
-        {
-            bag[code] = value.Value;
-        }
+        var summary = errors.Count == 0
+            ? "All providers disabled."
+            : string.Join("; ", errors);
+        return Result<SatellitePollutionDto>.Failure(summary);
     }
 
     internal static string FormatCoordinate(double value) =>

@@ -33,8 +33,12 @@ internal static class CacheKeys
     public static string SnapshotForStation(int stationId) =>
         Prefix + "snapshot:" + stationId.ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>Cached satellite reading for a (rounded) point.</summary>
-    public static string SatelliteForPoint(double latitude, double longitude) =>
+    /// <summary>
+    /// Cached satellite reading for a (rounded) point + provider. Per-provider isolation
+    /// means a failure on one source (e.g. OWM 401 during key propagation) does not
+    /// contaminate hits served by another (e.g. CAMS via Open-Meteo).
+    /// </summary>
+    public static string SatelliteForPoint(string provider, double latitude, double longitude) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{Prefix}satellite:{latitude:0.###}:{longitude:0.###}");
+            $"{Prefix}satellite:{provider}:{latitude:0.###}:{longitude:0.###}");
 }
