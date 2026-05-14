@@ -72,6 +72,11 @@
             .replace(/'/g, '&#39;');
     }
 
+    // GIOŚ publishes every pollutant concentration in micrograms per cubic metre.
+    // We bake the unit in here so the popup can render straight from the overview payload
+    // without round-tripping to /api/stations/{id}/snapshot just to learn the unit string.
+    const POLLUTANT_UNIT = 'μg/m³';
+
     function popupSkeleton(station) {
         const indexHtml = '<span class="aq-popup__index ' + indexClass(station.severity) +
             '">' + escapeHtml(indexLabel(station.severity)) + '</span>';
@@ -79,9 +84,30 @@
             '<div class="aq-popup__title">' + escapeHtml(station.name) + '</div>' +
             '<div class="aq-popup__city">' + escapeHtml(station.city || '') + '</div>' +
             indexHtml +
-            '<div class="aq-popup__body" data-station-id="' + station.id + '">' +
-            '<div class="aq-popup__loading">Loading sensors...</div>' +
+            '<div class="aq-popup__body">' +
+            pollutantListHtml(station.pollutants) +
             '</div></div>';
+    }
+
+    function pollutantListHtml(pollutants) {
+        if (!pollutants || pollutants.length === 0) {
+            return '<div class="aq-popup__loading">No sensor readings.</div>';
+        }
+        const sensors = pollutants
+            .slice()
+            // Show the worst offender first (highest WHO ratio), then alphabetical fallback.
+            .sort(function (a, b) {
+                const aRatio = (a.ratio === null || a.ratio === undefined) ? -1 : a.ratio;
+                const bRatio = (b.ratio === null || b.ratio === undefined) ? -1 : b.ratio;
+                if (bRatio !== aRatio) {
+                    return bRatio - aRatio;
+                }
+                return String(a.code).localeCompare(String(b.code));
+            })
+            .map(function (p) {
+                return { code: p.code, value: p.value, unit: POLLUTANT_UNIT };
+            });
+        return sensorsHtml(sensors);
     }
 
     function formatValue(value, unit) {
@@ -288,13 +314,10 @@
             const marker = L.marker([station.latitude, station.longitude], {
                 icon: buildIcon(station)
             });
+            // Popup renders fully from the overview payload that came in with addStations,
+            // so opening it never blocks on /api/stations/{id}/snapshot — the data is
+            // already on the JS side.
             marker.bindPopup(popupSkeleton(station));
-            marker.on('popupopen', function () {
-                if (state.dotnetRef) {
-                    state.dotnetRef.invokeMethodAsync('OnStationPopupOpenedAsync', station.id)
-                        .catch(function (err) { console.error('OnStationPopupOpenedAsync failed', err); });
-                }
-            });
             marker.addTo(state.markerLayer);
             state.markers.set(station.id, marker);
         });
@@ -302,25 +325,6 @@
         // If a heatmap layer is currently active, rebuild it now that data is loaded.
         if (state.activeLayer !== 'markers') {
             setLayer(state.activeLayer);
-        }
-    }
-
-    function updateStationSensors(stationId, sensors) {
-        const marker = state.markers.get(stationId);
-        if (!marker) {
-            return;
-        }
-        const popup = marker.getPopup();
-        if (!popup) {
-            return;
-        }
-        const element = popup.getElement();
-        if (!element) {
-            return;
-        }
-        const body = element.querySelector('.aq-popup__body[data-station-id="' + stationId + '"]');
-        if (body) {
-            body.innerHTML = sensorsHtml(sensors);
         }
     }
 
@@ -340,7 +344,7 @@
     window.pollmasterMap = {
         initMap: initMap,
         addStations: addStations,
-        updateStationSensors: updateStationSensors,
+        // updateStationSensors removed — popups now serve straight from the overview payload.
         dispose: dispose
     };
 })();

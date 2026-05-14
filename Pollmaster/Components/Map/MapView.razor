@@ -86,24 +86,6 @@
         }
     }
 
-    /// <summary>JS callback invoked when a station marker popup opens. Lazily loads the snapshot.</summary>
-    /// <param name="stationId">Station identifier from the marker.</param>
-    [JSInvokable]
-    public async Task OnStationPopupOpenedAsync(int stationId)
-    {
-        var snapshot = await ApiClient.GetStationSnapshotAsync(stationId, _cts.Token);
-        if (snapshot.IsFailure)
-        {
-            await JS.InvokeVoidAsync(
-                "pollmasterMap.updateStationSensors", stationId, (object)Array.Empty<MapMarkerSensor>());
-            return;
-        }
-        var payload = snapshot.Value.Sensors
-            .Select(s => new MapMarkerSensor(s.Code, s.Value, s.Unit))
-            .ToArray();
-        await JS.InvokeVoidAsync("pollmasterMap.updateStationSensors", stationId, (object)payload);
-    }
-
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
