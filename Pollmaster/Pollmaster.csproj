@@ -26,7 +26,10 @@
         <!-- Versions -->
         <Version>1.14.0</Version>
         <ApplicationDisplayVersion>1.14.0</ApplicationDisplayVersion>
-        <ApplicationVersion>1</ApplicationVersion>
+        <!-- Bumped (was 1) so Android forcibly replaces the previous APK on install,
+             flushing stale bundled MauiAsset files. Without this an install over the
+             same versionCode can keep the old assets cached in some scenarios. -->
+        <ApplicationVersion>2</ApplicationVersion>
 
         <!-- Metadata -->
         <Authors>Jakub Syrek</Authors>
