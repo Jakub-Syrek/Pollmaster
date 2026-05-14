@@ -26,4 +26,26 @@ public interface IOverviewService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>True when a rebuild ran, false when the existing disk snapshot was still fresh.</returns>
     Task<bool> RefreshIfStaleAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns whatever overview is already in memory right now - the in-flight partial
+    /// payload during a warmup, the fully-cached snapshot when ready, or <c>null</c>
+    /// when nothing has been built yet. Never blocks on the single-flight rebuild gate
+    /// and never fetches from disk. Used by <c>/api/overview/quick</c> so the map can
+    /// render incrementally while a cold warmup is still walking the GIOŚ rate-limiter.
+    /// </summary>
+    /// <returns>Snapshot of the live in-memory overview (possibly partial), or null.</returns>
+    OverviewPartial? TryGetCurrent();
 }
+
+/// <summary>
+/// A snapshot of the live in-memory overview - used by the streaming/quick endpoint to
+/// expose warmup progress without blocking on the single-flight rebuild gate.
+/// </summary>
+/// <param name="Stations">Stations built so far. May be empty during the very first seconds of a cold warmup.</param>
+/// <param name="IsComplete">True when the full rebuild has finished and the cache holds every station.</param>
+/// <param name="TotalExpected">Expected total station count once the rebuild completes (0 when unknown).</param>
+public sealed record OverviewPartial(
+    IReadOnlyList<StationOverviewDto> Stations,
+    bool IsComplete,
+    int TotalExpected);

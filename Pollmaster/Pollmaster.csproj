@@ -29,7 +29,7 @@
         <!-- Bumped (was 1) so Android forcibly replaces the previous APK on install,
              flushing stale bundled MauiAsset files. Without this an install over the
              same versionCode can keep the old assets cached in some scenarios. -->
-        <ApplicationVersion>5</ApplicationVersion>
+        <ApplicationVersion>6</ApplicationVersion>
 
         <!-- Metadata -->
         <Authors>Jakub Syrek</Authors>

@@ -19,7 +19,7 @@
         <div class="map-page__actions">
             <button type="button" class="map-page__btn"
                     @onclick="OnRefreshClickedAsync"
-                    disabled="@_busy">Refresh</button>
+                    disabled="@_refreshing">@(_refreshing ? "Refreshing…" : "Refresh")</button>
             <button type="button" class="map-page__btn map-page__btn--center"
                     @onclick="OnCenterClickedAsync"
                     disabled="@_busy"
@@ -62,11 +62,25 @@
     private const double RecordingScale = 1.5;
     private const int RecordingBitsPerSecond = 6_000_000;
 
+    // Poll cadence for /api/overview/quick during a cold backend warmup. Tight enough
+    // that markers visibly pop in (3 s ~= 60 stations per poll given GIOS rate-limit
+    // throughput), loose enough to not chew Railway egress credits.
+    private const int OverviewPollIntervalMs = 3000;
+    // Hard ceiling on the progressive-poll loop. After this we stop polling regardless
+    // of completion - prevents an indefinite spinner if the backend wedges.
+    private const int OverviewPollTimeoutSeconds = 240;
+
     private ElementReference _mapElement;
     private DotNetObjectReference<MapView>? _dotnetRef;
     private string _status = "Initializing...";
     private bool _initialized;
+    // Locks Screenshot/Record/Center - these share the WebView during capture and must
+    // not interleave. NOT set during overview refresh so the user can still capture or
+    // jump to their location while the markers are populating.
     private bool _busy;
+    // Debounces the Refresh button itself so a second click does not spawn a parallel
+    // poll loop. Independent of `_busy` so it never blocks the other action buttons.
+    private bool _refreshing;
     private string? _recordingSessionId;
     private readonly CancellationTokenSource _cts = new();
 
@@ -79,15 +93,39 @@
         }
 
         _initialized = true;
+
+        // Step 1: spin up Leaflet inside the WebView. Narrowly scoped try/catch so the
+        // "Map init failed" status only fires when the JS map actually fails - not when
+        // an unrelated overview poll throws much later.
         try
         {
             _dotnetRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("pollmasterMap.initMap", "pollmaster-map", _dotnetRef);
-            await LoadOverviewAsync(_cts.Token);
         }
         catch (Exception ex)
         {
-            _status = $"Map init failed: {ex.Message}";
+            Logger.LogError(ex, "pollmasterMap.initMap failed");
+            _status = $"Map init failed: {ex.GetType().Name}: {ex.Message}";
+            StateHasChanged();
+            return;
+        }
+
+        // Step 2: progressive overview load. Lights up the Refresh button so the user
+        // sees something is happening even on the very first open.
+        _refreshing = true;
+        StateHasChanged();
+        try
+        {
+            await LoadOverviewAsync(_cts.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Initial overview load failed");
+            _status = $"Initial load failed: {ex.GetType().Name}: {ex.Message}";
+        }
+        finally
+        {
+            _refreshing = false;
             StateHasChanged();
         }
     }
@@ -129,42 +167,96 @@
         var host = DisplayHost(baseAddress);
 
         // Stage 1 — instant render from the on-device snapshot, if we have one.
-        // Lets the user see the map populated within ~50 ms of opening the app,
-        // even when the backend is asleep, cold-starting on a free tier, or the
-        // phone has no internet at all.
+        // Lets the user see the map populated within ~50 ms of opening the app, even
+        // when the backend is asleep, cold-starting on a free tier, or the phone is
+        // offline.
         var offline = await OfflineCache.LoadAsync(cancellationToken);
-        if (offline is not null)
+        var lastRenderedCount = 0;
+        if (offline is not null && offline.Stations.Count > 0)
         {
             var cachedMarkers = offline.Stations.Select(ToMarker).ToArray();
             await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)cachedMarkers);
+            lastRenderedCount = cachedMarkers.Length;
             var age = DateTime.UtcNow - offline.SavedAt;
             _status = $"Offline cache: {cachedMarkers.Length} stations · {FormatAge(age)} old · refreshing from {host}…";
             StateHasChanged();
         }
         else
         {
-            _status = $"Loading from {host} (first load may take ~60s)…";
+            _status = $"Loading from {host}…";
             StateHasChanged();
         }
 
-        // Stage 2 — try to refresh from the backend in the background.
-        var result = await ApiClient.GetOverviewAsync(cancellationToken);
-        if (result.IsFailure)
+        // Stage 2 — progressive poll against /api/overview/quick. The endpoint is
+        // non-blocking on the server: it returns whatever the in-memory cache holds at
+        // the moment, including a partial view during a cold warmup. We render markers
+        // as soon as each batch arrives so the user sees Poland fill up rather than
+        // stare at a blank map for the 5-10 minutes of an upstream GIOS fan-out.
+        var startedAt = DateTime.UtcNow;
+        IReadOnlyList<StationOverviewDto>? finalSet = null;
+        while (!cancellationToken.IsCancellationRequested &&
+               (DateTime.UtcNow - startedAt).TotalSeconds < OverviewPollTimeoutSeconds)
         {
-            _status = offline is not null
-                ? $"Offline · {host} unreachable ({result.Error}). Showing cached snapshot."
-                : $"Backend error ({host}): {result.Error}";
-            StateHasChanged();
-            return;
+            var poll = await ApiClient.GetOverviewQuickAsync(cancellationToken);
+            if (poll.IsFailure)
+            {
+                _status = offline is not null
+                    ? $"Offline · {host} unreachable ({poll.Error}). Showing cached snapshot."
+                    : $"Backend error ({host}): {poll.Error}";
+                StateHasChanged();
+                return;
+            }
+
+            var partial = poll.Value;
+            if (partial.Stations.Count > lastRenderedCount || partial.IsComplete)
+            {
+                // New stations arrived since the last poll - re-render the marker layer.
+                // map.js clears + re-adds in addStations, so this is idempotent and the
+                // user just sees more pins each tick.
+                var markers = partial.Stations.Select(ToMarker).ToArray();
+                await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
+                lastRenderedCount = markers.Length;
+
+                if (partial.IsComplete)
+                {
+                    _status = $"{markers.Length} stations loaded";
+                    finalSet = partial.Stations;
+                    break;
+                }
+                _status = partial.TotalExpected > 0
+                    ? $"Loading from {host}: {markers.Length} / {partial.TotalExpected} stations…"
+                    : $"Loading from {host}: {markers.Length} stations…";
+                StateHasChanged();
+            }
+            else if (partial.Stations.Count == 0)
+            {
+                // Backend is cold-starting and has not begun publishing the partial yet.
+                _status = $"Backend warming up ({host}) — first stations any moment…";
+                StateHasChanged();
+            }
+
+            try
+            {
+                await Task.Delay(OverviewPollIntervalMs, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
 
-        var markers = result.Value.Select(ToMarker).ToArray();
-        await JS.InvokeVoidAsync("pollmasterMap.addStations", (object)markers);
-        _status = $"{markers.Length} stations loaded";
-        StateHasChanged();
-
-        // Persist asynchronously — don't make the UI wait for IO.
-        _ = OfflineCache.SaveAsync(result.Value, _cts.Token);
+        if (finalSet is not null)
+        {
+            // Persist asynchronously — don't make the UI wait for IO.
+            _ = OfflineCache.SaveAsync(finalSet, _cts.Token);
+        }
+        else if (lastRenderedCount > 0)
+        {
+            // Polling timed out but we did render something incremental. Leave the last
+            // partial on the map and tell the user.
+            _status = $"Stopped polling after {OverviewPollTimeoutSeconds}s · {lastRenderedCount} stations shown (partial).";
+            StateHasChanged();
+        }
     }
 
     private static string FormatAge(TimeSpan age)
@@ -191,12 +283,29 @@
 
     private async Task OnRefreshClickedAsync()
     {
-        if (_busy)
+        // Refresh has its own debounce flag - it does not lock Screenshot/Record/Center
+        // so the user can keep using the app while station data is repopulating from a
+        // cold backend.
+        if (_refreshing)
         {
             return;
         }
-        await RunCaptureAsync(() => LoadOverviewAsync(_cts.Token),
-            failureStatus: "Refresh failed.");
+        _refreshing = true;
+        StateHasChanged();
+        try
+        {
+            await LoadOverviewAsync(_cts.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogWarning(ex, "Refresh failed");
+            _status = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            _refreshing = false;
+            StateHasChanged();
+        }
     }
 
     /// <summary>

@@ -19,6 +19,15 @@ public sealed class OverviewService : IOverviewService
     private const int MaxParallelSnapshots = 3;
     private const double MinPopulationRatioForFullTtl = 0.5;
     private const int DegradedTtlSeconds = 30;
+    /// <summary>Publish the in-progress overview snapshot every N stations during a build.</summary>
+    private const int IncrementalPublishEvery = 10;
+
+    /// <summary>
+    /// Live in-progress state of the latest rebuild. Updated incrementally by
+    /// <see cref="BuildOverviewsAsync"/> so <see cref="TryGetCurrent"/> can serve
+    /// partial results without blocking on the rebuild gate.
+    /// </summary>
+    private volatile OverviewPartial? _liveProgress;
 
     /// <summary>
     /// Single-flight gate that ensures only one expensive GIOŚ fan-out is in flight at a
@@ -135,6 +144,19 @@ public sealed class OverviewService : IOverviewService
         {
             RebuildGate.Release();
         }
+    }
+
+    /// <inheritdoc />
+    public OverviewPartial? TryGetCurrent()
+    {
+        // Memory cache trumps everything: when the full snapshot is hot we serve that
+        // and stop reporting "incomplete".
+        if (TryGetCached(out var cached))
+        {
+            return new OverviewPartial(cached!, IsComplete: true, TotalExpected: cached!.Count);
+        }
+        // Otherwise return whatever the rebuild has accumulated so far (may be empty).
+        return _liveProgress;
     }
 
     private bool TryGetCached(out IReadOnlyList<StationOverviewDto>? cached)
@@ -255,7 +277,16 @@ public sealed class OverviewService : IOverviewService
         // ConcurrentBag + Parallel.ForEachAsync replaces the manual SemaphoreSlim + Task.WhenAll
         // dance. Same bounded concurrency (3), lower allocation overhead, and no need to
         // materialise a per-station Task list of ~290 entries.
+        //
+        // While the build runs we publish a snapshot of the bag to `_liveProgress` every
+        // IncrementalPublishEvery completions so /api/overview/quick can stream the
+        // partial result to the client and the map can render markers as they arrive,
+        // instead of the client staring at a blank screen for 5-10 minutes during a
+        // cold warmup against the GIOŚ rate limiter.
         var bag = new ConcurrentBag<StationOverviewDto>();
+        var totalExpected = stations.Count;
+        _liveProgress = new OverviewPartial(Array.Empty<StationOverviewDto>(), false, totalExpected);
+
         var options = new ParallelOptions
         {
             CancellationToken = cancellationToken,
@@ -265,8 +296,17 @@ public sealed class OverviewService : IOverviewService
         {
             var overview = await BuildSingleAsync(station, ct).ConfigureAwait(false);
             bag.Add(overview);
+            // ConcurrentBag.Count is O(N) cheap-enough on every-10 cadence; the snapshot
+            // captures a consistent point-in-time copy of the bag for the partial view.
+            if (bag.Count % IncrementalPublishEvery == 0)
+            {
+                _liveProgress = new OverviewPartial(bag.ToArray(), false, totalExpected);
+            }
         }).ConfigureAwait(false);
-        return bag.ToArray();
+
+        var final = bag.ToArray();
+        _liveProgress = new OverviewPartial(final, true, totalExpected);
+        return final;
     }
 
     private async Task<StationOverviewDto> BuildSingleAsync(

@@ -37,6 +37,15 @@ public sealed class PollmasterApiClient : IPollmasterApiClient
     }
 
     /// <inheritdoc />
+    public Task<Result<StationOverviewQuickDto>> GetOverviewQuickAsync(CancellationToken cancellationToken)
+    {
+        return GetAsync<StationOverviewQuickDto>(
+            "api/overview/quick",
+            cancellationToken,
+            fallback: new StationOverviewQuickDto(Array.Empty<StationOverviewDto>(), IsComplete: false, TotalExpected: 0));
+    }
+
+    /// <inheritdoc />
     public Task<Result<StationSnapshotDto>> GetStationSnapshotAsync(int stationId, CancellationToken cancellationToken)
     {
         return GetAsync<StationSnapshotDto>($"api/stations/{stationId}/snapshot", cancellationToken);

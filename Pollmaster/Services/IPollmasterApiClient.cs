@@ -13,6 +13,16 @@ public interface IPollmasterApiClient
     /// <returns>Overview list.</returns>
     Task<Result<IReadOnlyList<StationOverviewDto>>> GetOverviewAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Non-blocking poll for whatever overview is currently in memory on the backend.
+    /// Returns immediately (no rebuild wait) so the client can render incrementally
+    /// during a cold warmup. The envelope's <see cref="StationOverviewQuickDto.IsComplete"/>
+    /// flag tells the caller when polling can stop.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Quick-poll envelope.</returns>
+    Task<Result<StationOverviewQuickDto>> GetOverviewQuickAsync(CancellationToken cancellationToken);
+
     /// <summary>Fetch a composite per-station snapshot used by the map popup.</summary>
     /// <param name="stationId">GIOŚ station id.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
